@@ -1,0 +1,37 @@
+{
+  "fennec.engine": {
+    "category": "neutral",
+    "subtitle": "subtitles.rlfennec.engine",
+    "sounds": [
+      { "name": "rlfennec:fennec/engine_loop", "stream": false, "attenuation_distance": 24 }
+    ]
+  },
+  "fennec.boost": {
+    "category": "neutral",
+    "subtitle": "subtitles.rlfennec.boost",
+    "sounds": [
+      { "name": "rlfennec:fennec/boost_loop", "stream": false, "attenuation_distance": 32 }
+    ]
+  },
+  "fennec.boost_start": {
+    "category": "neutral",
+    "subtitle": "subtitles.rlfennec.boost_start",
+    "sounds": [
+      { "name": "rlfennec:fennec/boost_start", "attenuation_distance": 32 }
+    ]
+  },
+  "fennec.jump": {
+    "category": "neutral",
+    "subtitle": "subtitles.rlfennec.jump",
+    "sounds": [
+      { "name": "rlfennec:fennec/jump", "attenuation_distance": 24 }
+    ]
+  },
+  "fennec.flip": {
+    "category": "neutral",
+    "subtitle": "subtitles.rlfennec.flip",
+    "sounds": [
+      { "name": "rlfennec:fennec/flip", "attenuation_distance": 24 }
+    ]
+  }
+}
