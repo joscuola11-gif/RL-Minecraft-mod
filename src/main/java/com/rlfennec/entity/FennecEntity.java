@@ -93,6 +93,9 @@ public class FennecEntity extends VehicleEntity {
     private final Quaternionf orientation = new Quaternionf();
     private final Quaternionf orientationO = new Quaternionf();
     private boolean orientationInitialised;
+    /** How far the drawn body is raised so that a car lying tilted on the road rests on it instead of sinking in. */
+    private float visualLift;
+    private float visualLiftO;
     private boolean wasBoosting;
 
     public FennecEntity(EntityType<? extends FennecEntity> type, Level level) {
@@ -155,6 +158,9 @@ public class FennecEntity extends VehicleEntity {
     private void controlledTick() {
         boolean driven = this.getControllingPassenger() instanceof Player;
         CarPhysics.Input in = driven ? this.clientInput : this.emptyInput;
+        if (!driven) {
+            this.physics.clearCrash(); // an empty car stands itself up, nobody is there to turn it over
+        }
 
         Vec3 dm = this.getDeltaMovement();
         this.physics.vx = dm.x;
@@ -290,7 +296,7 @@ public class FennecEntity extends VehicleEntity {
         Vec3 up = new Vec3(roof.x, roof.y, roof.z);
         Vec3 velocity = this.getControllingPassenger() instanceof Player ? this.getDeltaMovement() : Vec3.ZERO;
         // the car pitches / rolls around its centre of mass, 0.45 blocks above the ground
-        Vec3 centre = this.position().add(0.0D, 0.45D, 0.0D);
+        Vec3 centre = this.position().add(0.0D, 0.45D + this.visualLift, 0.0D);
 
         // The two round boost nozzles in the rear fascia of the model are at x = -1.67, y = 0.67, z = +-0.316
         // (model space, measured on the mesh); the flames start a hand's width behind them.
@@ -320,6 +326,10 @@ public class FennecEntity extends VehicleEntity {
                         this.getZ() + (this.random.nextDouble() - 0.5D) * 1.6D, (this.random.nextDouble() - 0.5D) * 0.1D, 0.04D,
                         (this.random.nextDouble() - 0.5D) * 0.1D);
             }
+            return;
+        }
+        if (event == CarPhysics.EVENT_RECOVER) {
+            this.level().playLocalSound(this.getX(), this.getY(), this.getZ(), ModSounds.FLIP.get(), SoundSource.NEUTRAL, 0.7F, 0.6F, false);
             return;
         }
         SoundEvent sound = flip != CarPhysics.FLIP_NONE ? ModSounds.FLIP.get() : ModSounds.JUMP.get();
@@ -354,6 +364,16 @@ public class FennecEntity extends VehicleEntity {
         return this.level().isClientSide && this.getControllingPassenger() instanceof Player && this.isControlledByLocalInstance();
     }
 
+    /** True while the local driver's car lies crashed on the road waiting to be turned over with the jump key (the HUD shows a tip). */
+    public boolean isStranded() {
+        return this.isLocallyDriven() && this.physics.stranded;
+    }
+
+    /** How much the drawn body is raised above the entity, in blocks (a car on its roof / side / nose). */
+    public float getVisualLift(float partialTick) {
+        return Mth.lerp(partialTick, this.visualLiftO, this.visualLift);
+    }
+
     public boolean hasDriver() {
         return this.getControllingPassenger() instanceof Player;
     }
@@ -378,6 +398,32 @@ public class FennecEntity extends VehicleEntity {
         return this.orientationO.slerp(this.orientation, partialTick, new Quaternionf());
     }
 
+    /** The lowest point of the car in blocks relative to the entity's feet (negative = sunk into the road), for the current orientation. */
+    private float lowestPoint() {
+        float pivot = 0.45F;
+        float lowest = Float.MAX_VALUE;
+        Vector3f p = new Vector3f();
+        float[] points = FennecHull.POINTS;
+        for (int i = 0; i < points.length; i += 3) {
+            p.set(points[i], points[i + 1] - pivot, points[i + 2]);
+            this.orientation.transform(p);
+            lowest = Math.min(lowest, p.y + pivot);
+        }
+        return lowest;
+    }
+
+    private void updateVisualLift() {
+        this.visualLiftO = this.visualLift;
+        float target = 0.0F;
+        if (this.onGround()) {
+            target = Math.max(0.0F, -this.lowestPoint());
+        }
+        this.visualLift += (target - this.visualLift) * 0.4F;
+        if (Math.abs(target - this.visualLift) < 0.002F) {
+            this.visualLift = target;
+        }
+    }
+
     private void updateOrientation() {
         this.orientationO.set(this.orientation);
         if (this.isControlledByLocalInstance()) {
@@ -397,6 +443,9 @@ public class FennecEntity extends VehicleEntity {
         if (!this.orientationInitialised) {
             this.orientationO.set(this.orientation);
             this.orientationInitialised = true;
+        }
+        if (this.level().isClientSide) {
+            this.updateVisualLift();
         }
     }
 

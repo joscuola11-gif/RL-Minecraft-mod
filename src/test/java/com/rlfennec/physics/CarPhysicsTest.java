@@ -108,7 +108,7 @@ class CarPhysicsTest {
             apex = Math.max(apex, s.y);
             assertTrue(air < 100, "never landed");
         }
-        assertTrue(apex > 1.5D && apex < 3.5D, "apex " + apex);
+        assertTrue(apex > 2.8D && apex < 4.2D, "apex " + apex);
         assertTrue(air > 10 && air < 40, "air time " + air);
     }
 
@@ -251,11 +251,60 @@ class CarPhysicsTest {
     }
 
     @Test
-    void wAndSDoNotAcceleratetheCarInTheAir() {
-        Sim s = airborne();
-        s.in.throttle = 1.0F;
-        s.run(10);
-        assertEquals(0.0D, s.car.horizontalSpeed(), 1e-9D);
+    void throttleInTheAirPushesTheCarSlowlyForwardAndBackward() {
+        Sim fwd = airborne();
+        fwd.in.throttle = 1.0F;
+        fwd.run(10);
+        assertTrue(fwd.car.forwardSpeed() > 0.15D && fwd.car.forwardSpeed() < 0.25D, "speed " + fwd.car.forwardSpeed());
+        fwd.run(200);
+        assertEquals(CarPhysics.AIR_THROTTLE_MAX_FORWARD, fwd.car.forwardSpeed(), 0.03D); // never faster than that on its own
+
+        Sim back = airborne();
+        back.in.throttle = -1.0F;
+        back.run(200);
+        assertEquals(-CarPhysics.AIR_THROTTLE_MAX_BACKWARD, back.car.forwardSpeed(), 0.03D);
+
+        Sim half = airborne();
+        half.in.throttle = 0.5F; // half a trigger: half the push
+        half.run(10);
+        assertEquals(0.1D, half.car.forwardSpeed(), 0.02D);
+    }
+
+    @Test
+    void airThrottleDoesNotSlowAFasterCarOrFightTheBoost() {
+        Sim fast = airborne();
+        fast.car.vz = 1.0D;
+        fast.in.throttle = 1.0F;
+        fast.run(10);
+        assertEquals(1.0D, fast.car.forwardSpeed(), 0.03D); // no extra push above the limit, only the tiny air drag
+
+        Sim boosted = airborne();
+        boosted.in.throttle = 1.0F;
+        boosted.in.boost = true;
+        Sim onlyBoost = airborne();
+        onlyBoost.in.boost = true;
+        boosted.run(10);
+        onlyBoost.run(10);
+        assertEquals(onlyBoost.car.forwardSpeed(), boosted.car.forwardSpeed(), 1e-9D);
+    }
+
+    @Test
+    void airThrottleIsOffOnARoofAndDuringADodge() {
+        Sim roof = airborne();
+        roof.car.roll = 180.0F;
+        roof.in.throttle = 1.0F;
+        roof.run(5);
+        assertEquals(0.0D, roof.car.horizontalSpeed(), 1e-9D);
+
+        Sim plain = midAir();
+        Sim holding = midAir();
+        holding.in.throttle = 1.0F; // W held for a forward flip does not make the flip faster
+        dodge(plain, 1.0F, 0.0F);
+        dodge(holding, 1.0F, 0.0F);
+        holding.in.throttle = 1.0F;
+        plain.run(CarPhysics.DODGE_TICKS - 2);
+        holding.run(CarPhysics.DODGE_TICKS - 2);
+        assertEquals(plain.car.forwardSpeed(), holding.car.forwardSpeed(), 0.03D);
     }
 
     @Test
@@ -508,8 +557,9 @@ class CarPhysicsTest {
         cancelled.in.pitch = 0.0F;
         cancelled.run(CarPhysics.DODGE_TICKS);
         flipped.run(CarPhysics.DODGE_TICKS);
-        assertTrue(maxTilt < 10.0F, "the cancelled flip still tipped " + maxTilt);
-        assertEquals(0.0F, Math.abs(wrap(cancelled.car.pitch)), 3.0F);
+        assertTrue(maxTilt < 45.0F, "the cancelled flip still tipped " + maxTilt); // it coasts a little, but is nowhere near a flip
+        assertTrue(maxTilt > 3.0F, "the cancel must not be instant, tilt " + maxTilt);
+        assertEquals(maxTilt, Math.abs(wrap(cancelled.car.pitch)), 3.0F); // and it stays where it came to rest
         assertEquals(flipped.car.vx, cancelled.car.vx, 1e-9D * 100);
         assertEquals(flipped.car.vz, cancelled.car.vz, 1e-9D * 100);
     }
@@ -518,17 +568,48 @@ class CarPhysicsTest {
     void cancellingStopsTheFlipWhereItIsAndItDoesNotRestart() {
         Sim s = midAir();
         dodge(s, 1.0F, 0.0F);
-        s.run(2); // about a sixth of the flip
-        float pitchAtCancel = s.car.pitch;
-        assertTrue(pitchAtCancel > 50.0F);
+        s.run(1); // a sixth of the flip
+        double tiltAtCancel = tilt(s.car);
+        assertTrue(tiltAtCancel > 20.0D);
         s.in.pitch = -1.0F;
         s.tick();
-        float stopped = s.car.pitch;
-        s.run(CarPhysics.CANCEL_GRACE_TICKS - 2);
-        assertEquals(stopped, s.car.pitch, 3.0F, "the nose must stay where the cancel stopped it");
+        double firstTick = tilt(s.car);
+        assertTrue(firstTick > tiltAtCancel + 5.0D, "the flip must not stop on the very tick of the cancel (" + tiltAtCancel + " -> " + firstTick + ")");
+        s.run(5);
+        double stopped = tilt(s.car);
+        assertTrue(stopped > firstTick, "the car keeps turning a little after the cancel");
+        assertTrue(stopped < tiltAtCancel + 60.0D, "but it does stop: " + stopped);
+        s.run(2); // (the stick is still held back, but for a few ticks it must not tip the car the other way)
+        assertEquals(stopped, tilt(s.car), 1.0D, "the nose must stay where the cancel brought it to rest");
         s.in.pitch = 0.0F; // let go: the flip must not start again
         s.run(10);
-        assertEquals(stopped, s.car.pitch, 3.0F);
+        assertEquals(stopped, tilt(s.car), 1.0D);
+    }
+
+    /** Angle in degrees between the roof of the car and straight up. */
+    private static double tilt(CarPhysics car) {
+        return Math.toDegrees(Math.acos(Math.max(-1.0D, Math.min(1.0D, roofUp(car)))));
+    }
+
+    @Test
+    void theCancelBringsTheFlipToRestInAboutSevenTicks() {
+        Sim s = midAir();
+        dodge(s, 1.0F, 0.0F);
+        s.run(2); // fast rotation
+        double before = tilt(s.car);
+        s.in.pitch = -1.0F;
+        double[] angle = new double[7];
+        for (int i = 0; i < angle.length; i++) {
+            s.tick();
+            angle[i] = tilt(s.car);
+        }
+        double firstStep = angle[0] - before;
+        double secondStep = angle[1] - angle[0];
+        double thirdStep = angle[2] - angle[1];
+        double lastStep = Math.abs(angle[6] - angle[5]);
+        assertTrue(firstStep > 10.0D, "the flip keeps turning on the tick of the cancel (" + firstStep + ")");
+        assertTrue(firstStep > secondStep && secondStep > thirdStep && thirdStep > 0.0D, "the turn dies away gradually");
+        assertTrue(lastStep < 1.0D, "still turning " + lastStep + " degrees per tick after 7 ticks");
     }
 
     @Test
@@ -537,21 +618,23 @@ class CarPhysicsTest {
         s.car.vz = -0.3D; // reversing: the car travels backwards while facing +z
         dodge(s, -1.0F, 0.0F); // back flip
         int guard = 0;
-        while (roofUp(s.car) > -0.97D && guard++ < 30) {
-            s.tick(); // flip until the car is nearly upside down
+        while (tilt(s.car) < 110.0D && guard++ < 30) {
+            s.tick(); // flip until the car is well past vertical (the cancel takes a moment to bite)
         }
         s.in.pitch = 1.0F; // stick forward: cancel the flip
         s.tick();
         s.in.pitch = 0.0F;
+        s.run(CarPhysics.CANCEL_GRACE_TICKS); // it coasts to a stop, upside down
+        assertTrue(roofUp(s.car) < -0.7D, "the car must have come to rest upside down, roof up " + roofUp(s.car));
         s.in.roll = 1.0F; // air roll the wheels back down
         guard = 0;
-        while (roofUp(s.car) < 0.97D && guard++ < 30) {
+        while (roofUp(s.car) < 0.85D && guard++ < 30) {
             s.tick();
         }
         s.in.roll = 0.0F;
         s.run(6);
         double[] nose = CarPhysics.forward(s.car.yaw, s.car.pitch);
-        assertTrue(roofUp(s.car) > 0.9D, "roof up " + roofUp(s.car));
+        assertTrue(roofUp(s.car) > 0.85D, "roof up " + roofUp(s.car));
         assertTrue(nose[2] < -0.7D, "the car must now face -z, nose = " + java.util.Arrays.toString(nose));
         assertTrue(Math.abs(nose[1]) < 0.5D, "nose should be roughly level, y = " + nose[1]);
     }
@@ -590,8 +673,8 @@ class CarPhysicsTest {
                 apex[held] = Math.max(apex[held], s.y);
             }
         }
-        assertTrue(apex[0] < 1.0D, "tap apex " + apex[0]);
-        assertTrue(apex[1] > 1.8D && apex[1] < 3.2D, "hold apex " + apex[1]);
+        assertTrue(apex[0] > 0.9D && apex[0] < 1.3D, "tap apex " + apex[0]);
+        assertTrue(apex[1] > 2.8D && apex[1] < 4.2D, "hold apex " + apex[1]);
     }
 
     @Test
@@ -734,26 +817,208 @@ class CarPhysicsTest {
         assertTrue(b.car.roll < a.car.roll);
     }
 
-    @Test
-    void landingOnTheRoofStandsTheCarUpAndKeepsItsDirectionOfTravel() {
-        // upside down and facing the wrong way (yaw 180) while the car travels towards +z
+    /** A car at speed 0.8 that falls onto the road at the given attitude; returns the sim on the tick it touches down. */
+    private static Sim fallOn(float pitch, float roll, double height, double fallSpeed) {
         Sim s = new Sim();
-        s.car.vz = 1.0D;
-        s.car.yaw = 180.0F;
-        s.car.roll = 180.0F;
+        s.car.vz = 0.8D;
+        s.car.pitch = pitch;
+        s.car.roll = roll;
         s.car.onGround = false;
-        s.y = 0.2D;
-        s.car.vy = -0.3D;
+        s.y = height;
+        s.car.vy = -fallSpeed;
         s.car.jumpsUsed = 1;
         int guard = 0;
-        while (!s.car.onGround && guard++ < 20) {
+        while (!s.car.onGround && guard++ < 100) {
             s.tick();
         }
+        assertTrue(s.car.onGround, "never landed");
+        return s;
+    }
+
+    @Test
+    void landingOnTheRoofBouncesAndTheCarStaysCrashedOnItsRoof() {
+        Sim s = fallOn(0.0F, 180.0F, 3.0D, 0.3D);
+        s.tick(); // touchdown: it bounces
+        assertTrue(s.car.crashed);
+        assertTrue(s.car.vy > 0.2D, "bounce speed " + s.car.vy);
+        assertFalse(s.car.stranded, "still bouncing");
+        s.run(3);
+        assertFalse(s.car.onGround, "in the air again");
+        double[] roofBefore = roofVector(s.car);
+        assertTrue(roofBefore[1] < -0.9D, "still upside down in the bounce");
+
+        s.run(100);
+        assertTrue(s.car.onGround);
+        assertTrue(s.car.stranded, "the car lies on the road waiting for the jump key");
+        assertTrue(roofUp(s.car) < -0.9D, "no self-righting: roof y = " + roofUp(s.car));
+        assertTrue(s.car.horizontalSpeed() < 0.01D, "it slid to a halt");
+        assertEquals(0.0D, s.y, 1e-9D);
+    }
+
+    @Test
+    void aCrashedCarCannotBeDrivenOrBoostedOrJumpedUntilItIsTurnedOver() {
+        Sim s = fallOn(0.0F, 180.0F, 3.0D, 0.3D);
+        s.run(120);
+        assertTrue(s.car.stranded);
+        s.in.throttle = 1.0F;
+        s.in.steer = 1.0F;
+        s.in.boost = true;
+        float yaw = s.car.yaw;
+        float boost = s.car.boost;
+        s.run(30);
+        assertEquals(0.0D, s.car.horizontalSpeed(), 0.01D);
+        assertEquals(yaw, s.car.yaw, 0.01F);
+        assertEquals(boost, s.car.boost, 1e-6F, "no boost is used while lying on the roof");
+        assertFalse(s.car.boosting);
+        assertEquals(0.0D, s.y, 1e-9D, "it did not take off");
+    }
+
+    @Test
+    void landingOnTheNoseBouncesAndTopplesOverButNeverBackOntoItsWheels() {
+        Sim s = fallOn(85.0F, 0.0F, 3.0D, 0.3D); // nose almost straight down
         s.tick();
-        assertEquals(0.0F, s.car.yaw, 1.0F, "the car must not turn around");
-        assertEquals(0.0F, s.car.roll, 1.0F);
-        assertEquals(0.0F, s.car.pitch, 1.0F);
-        assertTrue(s.car.forwardSpeed() > 0.8D, "speed " + s.car.forwardSpeed());
+        assertTrue(s.car.crashed);
+        assertTrue(s.car.vy > 0.2D, "it bounces off its nose");
+        s.run(150);
+        assertTrue(s.car.stranded);
+        assertTrue(roofUp(s.car) < 0.1D, "it must not have righted itself, roof y = " + roofUp(s.car));
+        // it lies flat now: the nose is level (or the car is on its side / roof)
+        double[] nose = CarPhysics.forward(s.car.yaw, s.car.pitch);
+        assertTrue(Math.abs(nose[1]) < 0.3D, "nose y " + nose[1]);
+    }
+
+    @Test
+    void landingOnTheSideStaysOnTheSide() {
+        Sim s = fallOn(0.0F, 90.0F, 1.0D, 0.3D);
+        s.run(100);
+        assertTrue(s.car.stranded);
+        assertEquals(90.0F, wrap(s.car.roll), 8.0F, "it lies on its right side");
+    }
+
+    @Test
+    void aSlowCrashDoesNotBounce() {
+        Sim s = fallOn(0.0F, 180.0F, 0.1D, 0.15D);
+        s.tick();
+        assertTrue(s.car.crashed);
+        assertTrue(s.car.vy <= 0.0D, "no bounce, vy " + s.car.vy);
+        assertTrue(s.car.stranded);
+    }
+
+    @Test
+    void theBounceKeepsAirControlSoTheDriverCanSaveTheLanding() {
+        Sim s = fallOn(0.0F, 180.0F, 6.0D, 0.6D);
+        s.tick();
+        assertTrue(s.car.crashed && !s.car.onGround || s.car.vy > 0.0D);
+        s.in.roll = 1.0F; // air roll back onto the wheels while it bounces
+        int guard = 0;
+        while (roofUp(s.car) < 0.9D && guard++ < 40) {
+            s.tick();
+        }
+        s.in.roll = 0.0F;
+        assertTrue(roofUp(s.car) > 0.9D, "rolled upright in the bounce");
+        s.run(80);
+        assertTrue(s.car.onGround);
+        assertFalse(s.car.crashed, "landing on the wheels ends the crash");
+        assertFalse(s.car.stranded);
+        s.in.throttle = 1.0F;
+        s.run(10);
+        assertTrue(s.car.forwardSpeed() > 0.3D, "the car can be driven again");
+    }
+
+    @Test
+    void jumpTurnsACrashedCarBackOntoItsWheelsInExactlyOneSecond() {
+        Sim s = fallOn(0.0F, 180.0F, 3.0D, 0.3D);
+        s.run(120);
+        assertTrue(s.car.stranded);
+        float yaw = s.car.yaw;
+        s.in.jump = true;
+        s.tick();
+        assertEquals(CarPhysics.EVENT_RECOVER, s.car.event);
+        assertTrue(s.car.recovering);
+        assertFalse(s.car.stranded, "the tip goes away once it is turning");
+        assertEquals(0.0D, s.y, 1e-9D, "it turns over, it does not jump");
+
+        double[] previous = roofVector(s.car);
+        double biggestStep = 0.0D;
+        for (int i = 1; i < CarPhysics.RECOVERY_TICKS; i++) {
+            s.in.jump = true; // pressing jump again changes nothing
+            s.tick();
+            double[] roof = roofVector(s.car);
+            biggestStep = Math.max(biggestStep, Math.toDegrees(Math.acos(Math.min(1.0D, dot3(previous, roof)))));
+            previous = roof;
+            assertTrue(s.car.crashed, "still turning after " + (i + 1) + " ticks");
+            assertEquals(CarPhysics.EVENT_NONE, s.car.event);
+        }
+        assertTrue(roofUp(s.car) > -0.9D || biggestStep > 0.0D);
+        assertTrue(biggestStep < 25.0D, "smooth: at most " + biggestStep + " degrees per tick");
+        assertTrue(s.car.crashed, "not done a tick before the second is over");
+        s.tick(); // the 20th tick of the turn
+        assertFalse(s.car.crashed);
+        assertFalse(s.car.recovering);
+        assertEquals(0.0F, s.car.pitch, 1e-3F);
+        assertEquals(0.0F, s.car.roll, 1e-3F);
+        assertEquals(yaw, s.car.yaw, 1e-3F, "it keeps facing the way it faced");
+        assertEquals(1.0D, roofUp(s.car), 1e-3D);
+
+        // and it drives again
+        s.in.jump = false;
+        s.in.throttle = 1.0F;
+        s.run(10);
+        assertTrue(s.car.forwardSpeed() > 0.3D || Math.abs(s.car.vx) + Math.abs(s.car.vz) > 0.3D);
+    }
+
+    @Test
+    void theTurnOverIsGradualNotInstant() {
+        Sim s = fallOn(0.0F, 180.0F, 3.0D, 0.3D);
+        s.run(120);
+        s.in.jump = true;
+        s.tick();
+        s.run(4);
+        assertTrue(roofUp(s.car) < -0.8D, "after 0.25 s it has hardly begun, roof y " + roofUp(s.car));
+        s.run(6);
+        assertTrue(Math.abs(roofUp(s.car)) < 0.8D, "after 0.5 s it is about half way, roof y " + roofUp(s.car));
+        s.run(8);
+        assertTrue(roofUp(s.car) > 0.9D, "almost there after 0.9 s, roof y " + roofUp(s.car));
+    }
+
+    @Test
+    void theStickChoosesWhichWayACarOnItsRoofTurnsOver() {
+        float[] rolls = new float[2];
+        float[] sticks = {-1.0F, 1.0F};
+        for (int i = 0; i < 2; i++) {
+            Sim s = fallOn(0.0F, 180.0F, 3.0D, 0.3D);
+            s.run(120);
+            s.in.steer = sticks[i];
+            s.in.jump = true;
+            s.tick();
+            s.in.steer = 0.0F;
+            s.run(4);
+            rolls[i] = wrap(s.car.roll);
+        }
+        // turning right (stick right) takes the roll from 180 down through 90 ... the two directions differ
+        assertTrue(rolls[0] * rolls[1] < 0.0F, "left " + rolls[0] + ", right " + rolls[1]);
+    }
+
+    @Test
+    void aNormalLandingOnTheWheelsStillLevelsOutWithoutACrash() {
+        Sim s = fallOn(35.0F, 20.0F, 2.0D, 0.4D);
+        s.tick();
+        assertFalse(s.car.crashed);
+        s.run(12);
+        assertEquals(0.0F, s.car.pitch, 0.5F);
+        assertEquals(0.0F, s.car.roll, 0.5F);
+    }
+
+    private static double[] roofVector(CarPhysics car) {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        CarPhysics.basis(car.yaw, car.pitch, car.roll, f, u, r);
+        return u;
+    }
+
+    private static double dot3(double[] a, double[] b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     }
 
     @Test

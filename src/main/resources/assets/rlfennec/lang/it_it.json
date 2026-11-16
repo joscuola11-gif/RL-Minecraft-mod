@@ -38,5 +38,6 @@
   "key.rlfennec.hop": "Salto / flip",
   "key.rlfennec.leave": "Scendi dall'auto",
   "subtitles.rlfennec.engine_start": "Il motore della Fennec si accende",
-  "subtitles.rlfennec.engine_stop": "Il motore della Fennec si spegne"
+  "subtitles.rlfennec.engine_stop": "Il motore della Fennec si spegne",
+  "hud.rlfennec.flip_over": "Premi %s per girarti"
 }

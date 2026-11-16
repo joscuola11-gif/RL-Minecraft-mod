@@ -30,7 +30,8 @@ public class FennecRenderer extends EntityRenderer<FennecEntity> {
         // The whole orientation (yaw, pitch, roll, flips) is one rotation, interpolated as a quaternion so that
         // flips and loops never jump. It turns around the centre of mass.
         float pivot = FennecModel.pivotHeight();
-        poseStack.translate(0.0F, pivot, 0.0F);
+        // a car lying on its roof, side or nose is raised so that it rests on the road
+        poseStack.translate(0.0F, pivot + car.getVisualLift(partialTick), 0.0F);
         poseStack.mulPose(car.getOrientation(partialTick));
 
         float hurt = car.getHurtTime() - partialTick;

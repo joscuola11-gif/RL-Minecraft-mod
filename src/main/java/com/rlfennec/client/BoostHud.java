@@ -8,12 +8,17 @@ import com.mojang.blaze3d.vertex.Tesselator;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.rlfennec.RLFennec;
 import com.rlfennec.entity.FennecEntity;
+import com.rlfennec.input.PadAction;
 import com.rlfennec.physics.CarPhysics;
+import com.rlfennec.registry.ClientConfig;
+import net.minecraft.ChatFormatting;
+import net.minecraft.Util;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.LayeredDraw;
 import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import org.joml.Matrix4f;
@@ -32,6 +37,13 @@ public final class BoostHud implements LayeredDraw.Layer {
     private static final float START_DEG = 225.0F;
     private static final float SWEEP_DEG = 270.0F;
 
+    /** How far the gauge moves up to make room for the "turn over" tip under it, in pixels. */
+    private static final float TIP_ROOM = 16.0F;
+
+    /** 0 = no tip, 1 = tip fully shown (eased, so the gauge slides up and the tip fades in). */
+    private float tipSlide;
+    private long lastFrame;
+
     @Override
     public void render(GuiGraphics graphics, DeltaTracker deltaTracker) {
         Minecraft mc = Minecraft.getInstance();
@@ -43,10 +55,17 @@ public final class BoostHud implements LayeredDraw.Layer {
         boolean boosting = car.isBoosting();
         float fraction = Mth.clamp(boost / CarPhysics.MAX_BOOST, 0.0F, 1.0F);
 
+        long now = Util.getMillis();
+        float dt = lastFrame == 0L ? 0.0F : Math.min((now - lastFrame) / 1000.0F, 0.1F);
+        lastFrame = now;
+        boolean tip = car.isStranded();
+        tipSlide = Mth.clamp(tipSlide + (tip ? dt : -dt) * 5.0F, 0.0F, 1.0F);
+        float slide = tipSlide * tipSlide * (3.0F - 2.0F * tipSlide);
+
         float outer = 36.0F;
         float inner = 27.0F;
         float cx = graphics.guiWidth() - outer - 18.0F;
-        float cy = graphics.guiHeight() - outer - 18.0F;
+        float cy = graphics.guiHeight() - outer - 18.0F - TIP_ROOM * slide;
         Matrix4f pose = graphics.pose().last().pose();
 
         RenderSystem.setShader(GameRenderer::getPositionColorShader);
@@ -74,6 +93,35 @@ public final class BoostHud implements LayeredDraw.Layer {
         graphics.pose().scale(0.7F, 0.7F, 1.0F);
         graphics.drawCenteredString(mc.font, "BOOST", 0, 0, 0xFFB0B0B0);
         graphics.pose().popPose();
+
+        if (slide > 0.02F) {
+            drawFlipOverTip(graphics, mc, slide);
+        }
+    }
+
+    /** "Press SPACE to flip over", in the bottom-right corner under the gauge. */
+    private static void drawFlipOverTip(GuiGraphics graphics, Minecraft mc, float alpha) {
+        Component text = Component.translatable("hud.rlfennec.flip_over", Component.literal(jumpButtonName()).withStyle(ChatFormatting.YELLOW));
+        int width = mc.font.width(text);
+        int right = graphics.guiWidth() - 8;
+        int bottom = graphics.guiHeight() - 6;
+        int a = Mth.clamp((int) (alpha * 255.0F), 4, 255);
+        graphics.fill(right - width - 12, bottom - 15, right, bottom, ((a * 140 / 255) << 24));
+        graphics.drawString(mc.font, text, right - width - 6, bottom - 11, (a << 24) | 0xFFFFFF, true);
+    }
+
+    /** The key (and, with a controller connected, the button) that jumps: the one that turns the car over. */
+    private static String jumpButtonName() {
+        String key = FennecKeys.JUMP.isUnbound() ? null : FennecKeys.JUMP.getTranslatedKeyMessage().getString();
+        var padInput = ClientConfig.bindings().get(PadAction.JUMP);
+        String pad = !padInput.isNone() && GamepadPoller.name() != null ? padInput.displayName() : null;
+        if (key != null && pad != null) {
+            return key + " / " + pad;
+        }
+        if (key != null) {
+            return key;
+        }
+        return pad != null ? pad : "?";
     }
 
     private static void disc(Matrix4f pose, float cx, float cy, float radius, int argb) {

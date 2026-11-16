@@ -39,11 +39,14 @@ public final class CarPhysics {
     /** Fraction of the sideways velocity that survives each tick (lower = more grip). */
     public static final double LATERAL_GRIP = 0.20D;
 
-    /** A tap on the jump key gives a short hop of this speed; holding the key adds more for up to 6 ticks (RL's variable jump height). */
-    public static final double JUMP_VELOCITY = 0.30D;
-    public static final double JUMP_HOLD_ACCEL = 0.050D;
+    /**
+     * A tap on the jump key gives a hop of this speed (about 0.8 blocks high); holding the key adds more for up to
+     * 6 ticks (RL's variable jump height), the full jump is about 3.4 blocks high.
+     */
+    public static final double JUMP_VELOCITY = 0.35D;
+    public static final double JUMP_HOLD_ACCEL = 0.075D;
     public static final int JUMP_HOLD_TICKS = 6;
-    public static final double DOUBLE_JUMP_VELOCITY = 0.45D;
+    public static final double DOUBLE_JUMP_VELOCITY = 0.52D;
     /**
      * A dodge keeps only a fifth of the vertical speed. High above the road it also gives this much lift, so that the
      * flip has time to finish; close to the road it gives none, so the car lands quickly (the wave dash).
@@ -75,9 +78,20 @@ public final class CarPhysics {
     public static final float DODGE_ROTATION_RATE = 30.0F;
     /** How far the stick has to be pushed in the air for a second jump to become a dodge (otherwise it is a plain double jump). */
     public static final float DODGE_DEAD_ZONE = 0.5F;
-    public static final int CANCEL_GRACE_TICKS = 6;
-    /** Opposite input beyond this cancels the flip (the rotation stops where it is). */
+    public static final int CANCEL_GRACE_TICKS = 8;
+    /** Opposite input beyond this cancels the flip. */
     public static final float FLIP_CANCEL_THRESHOLD = 0.4F;
+    /**
+     * The flip does not stop dead when it is cancelled: the car keeps turning with 55% of the speed it had, then 30%,
+     * and so on (about 35 degrees more at full speed, over a fifth of a second), so the cancel needs a moment (and a
+     * bit of anticipation) to take hold.
+     */
+    public static final float FLIP_CANCEL_COAST_DECAY = 0.55F;
+
+    /** Slow thrust in the air without boost: W / S (or the triggers) nudge the car forward / back along its heading. */
+    public static final double AIR_THROTTLE_ACCEL = 0.020D;
+    public static final double AIR_THROTTLE_MAX_FORWARD = 0.60D;
+    public static final double AIR_THROTTLE_MAX_BACKWARD = 0.40D;
 
     /** Wave dash: landing within this many ticks of a dodge, nearly level, gives a burst of speed. */
     public static final int WAVE_DASH_WINDOW = 12;
@@ -86,13 +100,33 @@ public final class CarPhysics {
     /** After a wave dash the extra speed bleeds off slowly for this many ticks. */
     public static final int WAVE_DASH_GRACE_TICKS = 20;
     public static final double WAVE_DASH_OVERSPEED_DECAY = 0.004D;
-    /** Landing with the roof facing down (roof direction y below this, about 100 degrees from upright) is a crash landing: the car is stood up again. */
+    /**
+     * Landing with the roof tilted further than this from straight up (roof direction y below 0.45, about 63 degrees) is a
+     * crash landing: the car bounces and stays where it ends up (on its roof, side or nose) until the driver turns it
+     * over with the jump key.
+     */
+    public static final double SAFE_LANDING_ROOF_UP = 0.45D;
+    /** A landing within the wave dash window still counts as a (wave dash) landing on the wheels down to this tilt. */
     public static final double CRASH_LANDING_ROOF_UP = -0.2D;
+    /** A crash at less than this speed (blocks per tick) does not bounce; faster ones bounce at half the speed, at most this fast. */
+    public static final double BOUNCE_MIN_IMPACT = 0.28D;
+    public static final double BOUNCE_RESTITUTION = 0.5D;
+    public static final double BOUNCE_MAX_SPEED = 0.55D;
+    public static final double BOUNCE_HORIZONTAL_KEEP = 0.75D;
+    /** Fraction of the speed a crashed car keeps each tick on the road (it slides to a stop). */
+    public static final double CRASHED_FRICTION = 0.86D;
+    /** A crashed car tips over onto its roof or side by itself, but never back onto its wheels: degrees per tick (it speeds up). */
+    public static final float TOPPLE_ACCEL = 1.5F;
+    public static final float TOPPLE_MAX_RATE = 12.0F;
+    /** Turning a crashed car back on its wheels with the jump key takes exactly one second. */
+    public static final int RECOVERY_TICKS = 20;
 
     public static final int EVENT_NONE = 0;
     public static final int EVENT_JUMP = 1;
     public static final int EVENT_DOUBLE_JUMP = 2;
     public static final int EVENT_WAVE_DASH = 3;
+    /** The driver started to turn a crashed car back onto its wheels. */
+    public static final int EVENT_RECOVER = 4;
 
     public static final int FLIP_NONE = 0;
     public static final int FLIP_FRONT = 1;
@@ -172,12 +206,29 @@ public final class CarPhysics {
     /** 0 when the dodge started on the road, 1 when it started high above it (decides how gently the flip starts). */
     private double dodgeHeightFactor;
     private int overspeedGrace;
+    /** Degrees per tick that a cancelled flip is still turning, dying away (see {@link #FLIP_CANCEL_COAST_DECAY}). */
+    private float coastRate;
     /** After a flip cancel the input that cancelled it must not also tip the car the other way for a few ticks. */
     private int cancelGrace;
     /** Ticks since the last dodge started (large when there was none). */
     public int ticksSinceDodge = 1000;
     private boolean wasOnGround = true;
     private boolean dodgeStartsThisTick;
+
+    // ---- crash landing ----
+    /** The car crashed (landed on its roof, side or nose) and has not been turned back onto its wheels yet. */
+    public boolean crashed;
+    /** The crashed car lies on the road waiting for the jump key to turn it over (this is when the HUD shows the tip). */
+    public boolean stranded;
+    /** True while the driver's jump key is turning the crashed car over, 0..{@link #RECOVERY_TICKS}. */
+    public boolean recovering;
+    public int recoveryTick;
+    private final double[] recoveryAxis = new double[3];
+    private double recoveryAngle;
+    private float recoveryYaw;
+    private float toppleRate;
+    /** Vertical speed at the end of the last step: the speed of the impact when the car touches down. */
+    private double lastVy;
 
     // ---- results of the last step ----
     public boolean boosting;
@@ -206,8 +257,11 @@ public final class CarPhysics {
             steer = 0.0F;
         }
 
-        // boost meter
-        boosting = in.boost && boost > 0.0F && !inWater;
+        if (inWater) {
+            clearCrash(); // the water stands the car up again
+        }
+        // boost meter (a car lying on its roof cannot boost)
+        boosting = in.boost && boost > 0.0F && !inWater && !(crashed && onGround);
         if (boosting) {
             boost = Math.max(0.0F, boost - BOOST_USE_PER_TICK);
             ticksSinceBoost = 0;
@@ -226,27 +280,45 @@ public final class CarPhysics {
         // the stick that starts a dodge must not also steer the car on this very tick
         dodgeStartsThisTick = in.jump && !grounded && jumpsUsed == 1 && airTicks + 1 <= DOUBLE_JUMP_WINDOW
                 && dodgeMagnitude(in) >= DODGE_DEAD_ZONE;
-        if (grounded) {
-            if (!wasOnGround) {
-                landed();
-            }
+        boolean bounced = false;
+        if (grounded && !wasOnGround) {
+            bounced = landed();
+        }
+        boolean resting = grounded && !bounced;
+        if (resting) {
             jumpsUsed = 0;
             airTicks = 0;
             dodging = false;
-            groundStep(in);
+            coastRate = 0.0F;
+            if (crashed) {
+                crashedStep();
+            } else {
+                groundStep(in);
+            }
         } else {
             airTicks++;
             airStep(in);
         }
-        wasOnGround = grounded;
+        wasOnGround = resting;
 
         if (in.jump) {
-            tryJump(in);
+            tryJump(in, resting);
         }
+        stranded = resting && crashed && !recovering;
 
         if (vy < -TERMINAL_VELOCITY) {
             vy = -TERMINAL_VELOCITY;
         }
+        lastVy = vy;
+    }
+
+    /** Forgets a crash (the car is on its wheels again, or someone else drives it). */
+    public void clearCrash() {
+        crashed = false;
+        stranded = false;
+        recovering = false;
+        recoveryTick = 0;
+        toppleRate = 0.0F;
     }
 
     private void groundStep(Input in) {
@@ -346,6 +418,8 @@ public final class CarPhysics {
             vx += nose[0] * BOOST_ACCELERATION;
             vy += nose[1] * BOOST_ACCELERATION;
             vz += nose[2] * BOOST_ACCELERATION;
+        } else if (in.throttle != 0.0F && !dodging && ticksSinceDodge >= DODGE_TICKS && roofUp() > 0.2D) {
+            airThrottle(in.throttle);
         }
 
         if (jumpHoldTicks > 0) {
@@ -372,6 +446,31 @@ public final class CarPhysics {
         }
     }
 
+    /** y component of the roof direction: 1 = wheels down, -1 = upside down. */
+    private double roofUp() {
+        return Math.cos(Math.toRadians(pitch)) * Math.cos(Math.toRadians(roll));
+    }
+
+    /**
+     * Gentle thrust in the air, with no boost: forward or back along the heading of the car. It only speeds the car up
+     * to a modest speed (and slows it down back to a modest reverse speed); it never takes speed away from a faster car
+     * going the same way, so it cannot get in the way of a boost or a flip.
+     */
+    private void airThrottle(float throttle) {
+        double rad = Math.toRadians(yaw);
+        double fx = -Math.sin(rad);
+        double fz = Math.cos(rad);
+        double fs = vx * fx + vz * fz;
+        double push = 0.0D;
+        if (throttle > 0.0F) {
+            push = Math.min(AIR_THROTTLE_ACCEL * throttle, Math.max(0.0D, AIR_THROTTLE_MAX_FORWARD - fs));
+        } else {
+            push = -Math.min(AIR_THROTTLE_ACCEL * -throttle, Math.max(0.0D, fs + AIR_THROTTLE_MAX_BACKWARD));
+        }
+        vx += fx * push;
+        vz += fz * push;
+    }
+
     /**
      * Pitch (W/S), yaw (A/D) and roll (Q/E) in the air. Every rotation is about an axis of the car:
      * pitch about its right axis, yaw about its up axis, roll about its forward axis.
@@ -395,10 +494,13 @@ public final class CarPhysics {
             double sideInput = clamp(in.steer + in.roll, -1.0F, 1.0F);
             double against = -(pitchInput * dodgeForward + sideInput * dodgeRight);
             if (against > FLIP_CANCEL_THRESHOLD) {
-                // flip cancel: the dodge stops turning the car right where it is (cancel at the start = no flip at all,
-                // cancel at half way = a half flip, and the driver finishes with air roll)
+                // flip cancel: the dodge stops turning the car. It does not stop dead but coasts for a moment, dying
+                // away (cancel at the start = hardly any flip, cancel a little before half way = a half flip, and the
+                // driver finishes with air roll)
                 dodging = false;
                 cancelGrace = CANCEL_GRACE_TICKS;
+                coastRate = Math.min(DODGE_ROTATION_RATE * Math.min(1.0F, 0.15F + 0.14F * ticksSinceDodge + (float) dodgeHeightFactor),
+                        360.0F - dodgeAngle);
             } else {
                 float rate = DODGE_ROTATION_RATE * Math.min(1.0F, 0.15F + 0.14F * ticksSinceDodge + (float) dodgeHeightFactor);
                 dodgeStep = Math.min(rate, 360.0F - dodgeAngle);
@@ -409,6 +511,14 @@ public final class CarPhysics {
                 pitchInput = 0.0F;
                 rollInput = 0.0F;
                 yawInput = 0.0F;
+            }
+        }
+        if (!dodging && coastRate > 0.0F) {
+            coastRate *= FLIP_CANCEL_COAST_DECAY;
+            if (coastRate < 0.5F) {
+                coastRate = 0.0F;
+            } else {
+                dodgeStep = coastRate;
             }
         }
         if (cancelGrace > 0) {
@@ -549,8 +659,15 @@ public final class CarPhysics {
         return v < min ? min : Math.min(v, max);
     }
 
-    private void tryJump(Input in) {
-        boolean grounded = onGround && !inWater;
+    private void tryJump(Input in, boolean resting) {
+        if (crashed && resting) {
+            // a crashed car lying on the road: the jump key turns it over (it never jumps)
+            if (!recovering) {
+                startRecovery(in);
+            }
+            return;
+        }
+        boolean grounded = onGround && !inWater && resting;
         if (grounded) {
             vy = JUMP_VELOCITY;
             jumpHoldTicks = JUMP_HOLD_TICKS;
@@ -604,6 +721,7 @@ public final class CarPhysics {
         }
 
         dodging = true;
+        coastRate = 0.0F;
         dodgeHeightFactor = clamp01((groundDistance - DODGE_LIFT_MIN_HEIGHT) / 1.2D);
         dodgeAngle = 0.0F;
         ticksSinceDodge = 0;
@@ -615,27 +733,23 @@ public final class CarPhysics {
     }
 
     /**
-     * Touching the ground shortly after a dodge, with the wheels down, cancels the flip and keeps the dodge's
-     * speed: the wave dash.
+     * Touching the road. Shortly after a dodge, with the wheels down, this cancels the flip and keeps the dodge's
+     * speed: the wave dash. Landing on the roof, the side or the nose is a crash: the car bounces and stays crashed.
+     *
+     * @return true when the car bounced off the road and is in the air again
      */
-    private void landed() {
+    private boolean landed() {
         double[] f = new double[3];
         double[] u = new double[3];
         double[] r = new double[3];
         basis(yaw, pitch, roll, f, u, r);
-        if (u[1] < CRASH_LANDING_ROOF_UP) {
-            // Landed on the roof or on the nose: stand the car up and keep it going the way it was travelling
-            // (the yaw of a car that is upside down or past vertical can point the opposite way).
-            if (horizontalSpeed() > 0.1D) {
-                yaw = (float) Math.toDegrees(Math.atan2(-vx, vz));
-            }
-            pitch = 0.0F;
-            roll = 0.0F;
-            ticksSinceDodge = 1000;
-            return;
+        boolean waveDashLanding = ticksSinceDodge <= WAVE_DASH_WINDOW && u[1] >= CRASH_LANDING_ROOF_UP;
+        if (u[1] < SAFE_LANDING_ROOF_UP && !waveDashLanding) {
+            return crashLanded();
         }
+        clearCrash();
         if (ticksSinceDodge > WAVE_DASH_WINDOW) {
-            return;
+            return false;
         }
         double gain = WAVE_DASH_IMPULSE * (dodgeForward >= 0.0D
                 ? Math.max(dodgeForward, 0.6D * Math.abs(dodgeRight))
@@ -651,6 +765,185 @@ public final class CarPhysics {
         ticksSinceDodge = 1000; // only once per dodge
         overspeedGrace = WAVE_DASH_GRACE_TICKS;
         event = EVENT_WAVE_DASH;
+        return false;
+    }
+
+    private boolean crashLanded() {
+        double impact = Math.max(0.0D, -lastVy);
+        crashed = true;
+        recovering = false;
+        recoveryTick = 0;
+        toppleRate = 0.0F;
+        dodging = false;
+        coastRate = 0.0F;
+        ticksSinceDodge = 1000;
+        angularPitch = 0.0F;
+        angularYaw = 0.0F;
+        angularRoll = 0.0F;
+        if (impact <= BOUNCE_MIN_IMPACT) {
+            return false; // too slow to bounce: the car just lies there
+        }
+        // it bounces, still tumbling the way it came down; the driver can even air roll it back onto its wheels before
+        // the next touchdown. No jumps while it bounces.
+        vy = Math.min(impact * BOUNCE_RESTITUTION, BOUNCE_MAX_SPEED);
+        vx *= BOUNCE_HORIZONTAL_KEEP;
+        vz *= BOUNCE_HORIZONTAL_KEEP;
+        jumpsUsed = 2;
+        jumpHoldTicks = 0;
+        airTicks = 0;
+        return true;
+    }
+
+    /** A crashed car on the road: it slides to a stop, tips over onto its roof or side, and waits for the jump key. */
+    private void crashedStep() {
+        vx *= CRASHED_FRICTION;
+        vz *= CRASHED_FRICTION;
+        vy = -0.1D;
+        angularPitch = 0.0F;
+        angularYaw = 0.0F;
+        angularRoll = 0.0F;
+        if (recovering) {
+            recoveryStep();
+        } else {
+            topple();
+        }
+    }
+
+    /**
+     * A car standing on its nose (or tilted past its tipping point) falls over onto the face that is already the lowest:
+     * roof, left side or right side. It never falls back onto its wheels: only the driver does that.
+     */
+    private void topple() {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        basis(yaw, pitch, roll, f, u, r);
+        // outward normals of the roof and the two sides; the one that points down the most ends up on the road
+        // (a small preference for the roof: a car standing straight on its nose lands on its roof)
+        double[][] faces = {u, {-r[0], -r[1], -r[2]}, r};
+        double[] bias = {-0.2D, 0.0D, 0.0D};
+        int best = 0;
+        for (int i = 1; i < faces.length; i++) {
+            if (faces[i][1] + bias[i] < faces[best][1] + bias[best]) {
+                best = i;
+            }
+        }
+        double[] n = faces[best];
+        double angle = Math.acos(clampD(-n[1], -1.0D, 1.0D));
+        if (angle < Math.toRadians(0.5D)) {
+            toppleRate = 0.0F;
+            return;
+        }
+        double[] axis = {n[2], 0.0D, -n[0]}; // n x down: the horizontal axis that tips n towards the road
+        if (axis[0] * axis[0] + axis[2] * axis[2] < 1.0E-8D) {
+            axis[0] = f[0];
+            axis[1] = f[1];
+            axis[2] = f[2];
+        }
+        normalize(axis);
+        toppleRate = Math.min(toppleRate + TOPPLE_ACCEL, TOPPLE_MAX_RATE);
+        rotateAbout(axis, Math.min(Math.toRadians(toppleRate), angle), f, u, r);
+        setOrientation(f, u);
+    }
+
+    /** Writes a (nearly) orthonormal nose / roof pair back as yaw, pitch and roll. */
+    private void setOrientation(double[] f, double[] u) {
+        normalize(f);
+        double dot = u[0] * f[0] + u[1] * f[1] + u[2] * f[2];
+        for (int i = 0; i < 3; i++) {
+            u[i] -= dot * f[i];
+        }
+        normalize(u);
+        double[] euler = euler(f, u, yaw);
+        yaw = (float) euler[0];
+        pitch = (float) euler[1];
+        roll = (float) euler[2];
+    }
+
+    /**
+     * The driver pressed jump on a crashed car: it turns over, wheels down, nose pointing the way it points now. The turn
+     * takes {@link #RECOVERY_TICKS} ticks (one second), slow at the start and the end.
+     */
+    private void startRecovery(Input in) {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        basis(yaw, pitch, roll, f, u, r);
+        double yawRad = Math.toRadians(yaw);
+        double[] ft = {-Math.sin(yawRad), 0.0D, Math.cos(yawRad)};
+        double[] ut = {0.0D, 1.0D, 0.0D};
+        double[] rt = cross(ft, ut);
+        // the rotation that takes the car's axes to the upright ones: q = ft f^T + ut u^T + rt r^T
+        double[][] q = new double[3][3];
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                q[i][j] = ft[i] * f[j] + ut[i] * u[j] + rt[i] * r[j];
+            }
+        }
+        double cos = clampD((q[0][0] + q[1][1] + q[2][2] - 1.0D) / 2.0D, -1.0D, 1.0D);
+        double angle = Math.acos(cos);
+        double[] axis = new double[3];
+        if (angle > Math.PI - 0.02D) {
+            // a half turn (the car is on its roof): about the car's own axis that does not move, the nose axis; the
+            // stick says which way (right by default)
+            double best = -1.0D;
+            for (int col = 0; col < 3; col++) {
+                double d = (q[col][col] + 1.0D) / 2.0D;
+                if (d > best) {
+                    best = d;
+                    for (int i = 0; i < 3; i++) {
+                        axis[i] = (q[i][col] + (i == col ? 1.0D : 0.0D)) / 2.0D;
+                    }
+                }
+            }
+            normalize(axis);
+            double side = in.steer + in.roll;
+            double along = dot(axis, f);
+            if (Math.abs(along) > 0.3D) {
+                boolean wantRight = side >= -0.3D;
+                if ((along > 0.0D) != wantRight) {
+                    for (int i = 0; i < 3; i++) {
+                        axis[i] = -axis[i];
+                    }
+                }
+            }
+        } else if (angle > 1.0E-3D) {
+            double sin = Math.sin(angle);
+            axis[0] = (q[2][1] - q[1][2]) / (2.0D * sin);
+            axis[1] = (q[0][2] - q[2][0]) / (2.0D * sin);
+            axis[2] = (q[1][0] - q[0][1]) / (2.0D * sin);
+            normalize(axis);
+        }
+        System.arraycopy(axis, 0, recoveryAxis, 0, 3);
+        recoveryAngle = angle;
+        recoveryYaw = yaw;
+        recoveryTick = 0;
+        recovering = true;
+        toppleRate = 0.0F;
+        event = EVENT_RECOVER;
+    }
+
+    private void recoveryStep() {
+        double before = smoothStep(recoveryTick / (double) RECOVERY_TICKS);
+        recoveryTick++;
+        if (recoveryTick >= RECOVERY_TICKS) {
+            yaw = recoveryYaw;
+            pitch = 0.0F;
+            roll = 0.0F;
+            clearCrash(); // on its wheels again
+            return;
+        }
+        double after = smoothStep(recoveryTick / (double) RECOVERY_TICKS);
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        basis(yaw, pitch, roll, f, u, r);
+        rotateAbout(recoveryAxis, recoveryAngle * (after - before), f, u, r);
+        setOrientation(f, u);
+    }
+
+    private static double smoothStep(double x) {
+        return x * x * (3.0D - 2.0D * x);
     }
 
     private static double dodgeMagnitude(Input in) {
