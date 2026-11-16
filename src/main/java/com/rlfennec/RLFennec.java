@@ -1,6 +1,7 @@
 package com.rlfennec;
 
 import com.rlfennec.net.ModNetwork;
+import com.rlfennec.registry.ClientConfig;
 import com.rlfennec.registry.FennecConfig;
 import com.rlfennec.registry.ModEntities;
 import com.rlfennec.registry.ModItems;
@@ -29,6 +30,7 @@ public class RLFennec {
         modBus.addListener(RLFennec::addToCreativeTab);
 
         container.registerConfig(ModConfig.Type.COMMON, FennecConfig.SPEC);
+        container.registerConfig(ModConfig.Type.CLIENT, ClientConfig.SPEC, "rlfennec-client.toml");
     }
 
     private static void addToCreativeTab(BuildCreativeModeTabContentsEvent event) {

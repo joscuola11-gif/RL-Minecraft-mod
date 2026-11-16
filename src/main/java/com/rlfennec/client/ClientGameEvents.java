@@ -10,6 +10,9 @@ import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
+import net.minecraft.network.chat.Component;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
@@ -20,7 +23,9 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.CalculateDetachedCameraDistanceEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
 import net.neoforged.neoforge.client.event.RenderPlayerEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 
@@ -37,8 +42,8 @@ public final class ClientGameEvents {
     private static float fovBoost;
     private static float cameraYaw;
     private static float cameraYawO;
-    private static boolean padJumpHeld;
-    private static boolean padEnterExitHeld;
+    private static boolean jumpHeld;
+    private static boolean exitHeld;
 
     private ClientGameEvents() {
     }
@@ -57,26 +62,22 @@ public final class ClientGameEvents {
         Options options = mc.options;
         FennecEntity car = drivenCar(mc);
 
-        GamepadMapper.Controls pad = null;
-        if (mc.player != null && mc.screen == null && mc.isWindowActive()) {
-            pad = GamepadPoller.poll();
-        }
+        // nothing is read while a screen is open (typing in chat...) or the window is in the background
+        boolean listening = mc.player != null && mc.screen == null && mc.isWindowActive();
+        GamepadMapper.Controls pad = listening ? GamepadPoller.poll() : null;
         boolean padEnterExit = pad != null && pad.enterExit;
-        boolean enterExitPressed = padEnterExit && !padEnterExitHeld;
-        padEnterExitHeld = padEnterExit;
+        boolean exitDown = listening && (FennecKeys.isDown(FennecKeys.EXIT) || padEnterExit);
+        boolean exitPressed = exitDown && !exitHeld;
+        exitHeld = exitDown;
 
         if (car == null) {
-            // drain presses made while walking so that they do not jump the car the moment it is entered
-            while (options.keyJump.consumeClick()) {
-                // discard
-            }
-            padJumpHeld = pad != null && pad.jump;
+            jumpHeld = false;
             if (wasDriving) {
                 wasDriving = false;
                 options.setCameraType(previousCamera);
             }
             fovBoost *= 0.8F;
-            if (enterExitPressed) {
+            if (listening && padEnterExit && exitPressed) {
                 enterNearestCar(mc);
             }
             return;
@@ -89,54 +90,85 @@ public final class ClientGameEvents {
             cameraYaw = car.getYRot();
             cameraYawO = cameraYaw;
             mc.player.setXRot(NEUTRAL_VIEW_PITCH);
+            exitHeld = exitDown; // a key still held from before does not count as pressing it
+            exitPressed = false;
         }
         // the car has no first-person view: you would sit inside its roof
         if (options.getCameraType().isFirstPerson()) {
             options.setCameraType(CameraType.THIRD_PERSON_BACK);
         }
-        if (enterExitPressed) {
+        if (exitPressed) {
             PacketDistributor.sendToServer(new DismountPayload());
         }
 
-        // Q / E / Left Ctrl overlap with vanilla "drop item", "inventory" and "swap hands": swallow those presses
+        // a vanilla action must not fire when its key is also one of ours (by default Q drops the item, E opens the inventory)
         swallowVanillaPresses(options);
 
-        float throttle = axis(options.keyUp, options.keyDown);
-        float steer = axis(options.keyRight, options.keyLeft);
-        float pitch = throttle * (FennecConfig.invertAirPitch() ? -1.0F : 1.0F);
-        float roll = axis(FennecKeys.ROLL_RIGHT, FennecKeys.ROLL_LEFT);
-        boolean airRollFree = FennecKeys.AIR_ROLL.isDown();
-        boolean boost = FennecKeys.BOOST.isDown();
-        boolean jump = false;
-        while (options.keyJump.consumeClick()) {
-            jump = true;
+        float throttle = 0.0F;
+        float steer = 0.0F;
+        float pitch = 0.0F;
+        float roll = 0.0F;
+        boolean airRollFree = false;
+        boolean boost = false;
+        boolean jumpDown = false;
+        if (listening) {
+            throttle = axis(FennecKeys.ACCELERATE, FennecKeys.BRAKE);
+            steer = axis(FennecKeys.STEER_RIGHT, FennecKeys.STEER_LEFT);
+            pitch = axis(FennecKeys.NOSE_DOWN, FennecKeys.NOSE_UP);
+            roll = axis(FennecKeys.ROLL_RIGHT, FennecKeys.ROLL_LEFT);
+            airRollFree = FennecKeys.isDown(FennecKeys.AIR_ROLL);
+            boost = FennecKeys.isDown(FennecKeys.BOOST);
+            jumpDown = FennecKeys.isDown(FennecKeys.JUMP);
         }
+        float invert = FennecConfig.invertAirPitch() ? -1.0F : 1.0F;
+        pitch *= invert;
 
         if (pad != null) {
             throttle = Mth.clamp(throttle + pad.throttle, -1.0F, 1.0F);
             steer = Mth.clamp(steer + pad.steer, -1.0F, 1.0F);
-            pitch = Mth.clamp(pitch + pad.pitch * (FennecConfig.invertAirPitch() ? -1.0F : 1.0F), -1.0F, 1.0F);
+            pitch = Mth.clamp(pitch + pad.pitch * invert, -1.0F, 1.0F);
             roll = Mth.clamp(roll + pad.roll, -1.0F, 1.0F);
             airRollFree |= pad.airRollFree;
             boost |= pad.boost;
-            jump |= pad.jump && !padJumpHeld;
+            jumpDown |= pad.jump;
         }
-        padJumpHeld = pad != null && pad.jump;
+        boolean jump = jumpDown && !jumpHeld;
+        jumpHeld = jumpDown;
 
         car.setClientInput(throttle, steer, pitch, roll, airRollFree, jump, boost);
 
         updateCamera(car);
     }
 
-    private static float axis(KeyMapping positive, KeyMapping negative) {
-        return (positive.isDown() ? 1.0F : 0.0F) - (negative.isDown() ? 1.0F : 0.0F);
+    /** While driving, sneaking must not dismount: getting out is the "Exit" key (or the controller). */
+    @SubscribeEvent
+    public static void onMovementInput(MovementInputUpdateEvent event) {
+        if (event.getEntity().getVehicle() instanceof FennecEntity) {
+            event.getInput().shiftKeyDown = false;
+        }
     }
 
-    /** A vanilla action must not fire when its key is also one of ours (default Q, E). */
+    /** A shortcut to the controller bindings at the top left of Options > Controls > Key Binds. */
+    @SubscribeEvent
+    public static void onScreenInit(ScreenEvent.Init.Post event) {
+        if (event.getScreen() instanceof KeyBindsScreen screen) {
+            event.addListener(Button.builder(Component.translatable("gui.rlfennec.pad.open"),
+                    button -> Minecraft.getInstance().setScreen(new PadBindingsScreen(screen))).bounds(8, 6, 150, 20).build());
+        }
+    }
+
+    private static float axis(KeyMapping positive, KeyMapping negative) {
+        return (FennecKeys.isDown(positive) ? 1.0F : 0.0F) - (FennecKeys.isDown(negative) ? 1.0F : 0.0F);
+    }
+
+    /** Any vanilla key binding that shares its key with one of ours must not act while driving. */
     private static void swallowVanillaPresses(Options options) {
-        for (KeyMapping vanilla : new KeyMapping[] {options.keyDrop, options.keyInventory, options.keySwapOffhand}) {
-            for (KeyMapping ours : new KeyMapping[] {FennecKeys.BOOST, FennecKeys.ROLL_LEFT, FennecKeys.ROLL_RIGHT, FennecKeys.AIR_ROLL}) {
-                if (vanilla.getKey().equals(ours.getKey())) {
+        for (KeyMapping vanilla : options.keyMappings) {
+            if (FennecKeys.ALL.contains(vanilla)) {
+                continue;
+            }
+            for (KeyMapping ours : FennecKeys.ALL) {
+                if (!ours.isUnbound() && vanilla.getKey().equals(ours.getKey())) {
                     while (vanilla.consumeClick()) {
                         // discard
                     }

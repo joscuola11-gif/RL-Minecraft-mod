@@ -21,9 +21,22 @@ si muove, **salta** (e fa il flip), ha **100 di boost** e in basso a destra c'è
 | `Spazio` | **salto**. Premilo ancora in aria (entro 1,5 s) per il **doppio salto**; con `W` `S` `A` `D` premuto fai un **flip** in quella direzione, con una spinta in più |
 | `Ctrl sinistro` | **boost** |
 | Mouse su/giù | solo la visuale. **Non punta più l'auto**: il muso si controlla con `W`/`S` |
-| `Shift` | scendi |
+| `Shift` | scendi (vedi sotto) |
 
-Tutti i tasti si cambiano in *Opzioni → Comandi → Rocket League Fennec*. Lì Minecraft li segnala in rosso perché `Q`, `E` e `Ctrl` sono anche "Butta oggetto", "Inventario" e "Corri": è voluto, mentre guidi quelle azioni sono disattivate (non butti l'oggetto in mano e non si apre l'inventario). In `config/rlfennec-common.toml` c'è `invertAirPitch` per invertire `W`/`S` in aria.
+### Cambiare i comandi
+
+**Tastiera e mouse**: ogni azione ha il suo tasto in *Opzioni → Comandi → Tasti → Rocket League Fennec*: accelera, frena, sterza a sinistra/destra, muso giù/su, salto, boost, air roll sinistra/destra, air roll libero, scendi. Si può usare anche un tasto del mouse (sconsigliato `clic sinistro/destro`: Minecraft li usa comunque per colpire e piazzare).
+* Accelera, frena, sterza, muso giù/su, salto e scendi sono **vuoti** ("Non assegnato") di proposito: vuoto vuol dire "usa il tasto di Minecraft" (Avanti, Indietro, Sinistra, Destra, Salto, Furtività), quindi se hai già cambiato quelli in vanilla vanno bene così. Assegna un tasto per dare all'auto un comando tutto suo, per esempio le frecce per il muso e `WASD` per il resto.
+* Mentre guidi **Furtività non fa più scendere**: si scende con il tasto "Scendi" (se è vuoto, con Furtività).
+* `Q`, `E`, `Ctrl` e `Alt` sono assegnati di default e Minecraft li segnala in rosso perché `Q`, `E` e `Ctrl` sono anche "Butta oggetto", "Inventario" e "Corri": è voluto, mentre guidi quelle azioni di Minecraft sono disattivate (non butti l'oggetto in mano e non si apre l'inventario), vale per qualsiasi tasto che condividi con un'azione dell'auto.
+* In `config/rlfennec-common.toml` c'è `invertAirPitch` per invertire `W`/`S` in aria.
+
+**Controller**: ogni azione si può mettere su qualunque tasto, levetta (in una direzione) o grilletto.
+1. Apri la schermata con il bottone **"Comandi controller Fennec..."** in alto a sinistra in *Opzioni → Comandi → Tasti* (oppure *Mods → Rocket League Fennec → Config*).
+2. Clicca il comando, poi premi il tasto o muovi la levetta/il grilletto che vuoi (`Esc` annulla, `Canc` toglie l'assegnazione). Ricorda che i pad PlayStation hanno `A` = Croce, `B` = Cerchio, `X` = Quadrato, `Y` = Triangolo, `LB`/`RB` = L1/R1, `LT`/`RT` = L2/R2.
+3. Due comandi sullo stesso input compaiono in rosso, come per la tastiera.
+
+Le assegnazioni sono salvate in `config/rlfennec-client.toml` (formato `"button:0"`, `"axis:5:+"`, `"none"`, descritto nel file), si possono anche modificare a mano.
 
 Gli air roll ruotano l'auto attorno ai **suoi** assi, come in Rocket League: pitch attorno al fianco, yaw attorno al tetto, roll attorno al muso. Per questo dopo un roll di 90° `A`/`D` abbassano o alzano il muso, e il boost spinge sempre dove punta il muso, anche a testa in giù. Si può fare anche il giro della morte. Atterrando l'auto si raddrizza da sola.
 

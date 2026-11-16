@@ -1,6 +1,9 @@
 package com.rlfennec.client;
 
 import com.rlfennec.input.GamepadMapper;
+import com.rlfennec.input.PadInput;
+import com.rlfennec.registry.ClientConfig;
+import javax.annotation.Nullable;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWGamepadState;
 
@@ -17,12 +20,26 @@ final class GamepadPoller {
     private GamepadPoller() {
     }
 
-    /** @return the current controls, or {@code null} when no gamepad is connected. */
+    /** @return the car controls for the current bindings, or {@code null} when no gamepad is connected. */
+    @Nullable
     static GamepadMapper.Controls poll() {
+        GamepadMapper.State raw = readRaw();
+        return raw == null ? null : GamepadMapper.map(raw, ClientConfig.bindings());
+    }
+
+    /** @return the raw state (shared instance, do not keep it), or {@code null} when no gamepad is connected. */
+    @Nullable
+    static GamepadMapper.State readRaw() {
         if (!read()) {
             return null;
         }
-        return GamepadMapper.map(SNAPSHOT);
+        return SNAPSHOT;
+    }
+
+    /** Name of the connected gamepad, or {@code null}. */
+    @Nullable
+    static String name() {
+        return read() ? GLFW.glfwGetGamepadName(joystick) : null;
     }
 
     private static boolean read() {
@@ -43,27 +60,20 @@ final class GamepadPoller {
             }
         }
 
-        SNAPSHOT.leftX = STATE.axes(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
-        SNAPSHOT.leftY = STATE.axes(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
-        SNAPSHOT.leftTrigger = trigger(0, STATE.axes(GLFW.GLFW_GAMEPAD_AXIS_LEFT_TRIGGER));
-        SNAPSHOT.rightTrigger = trigger(1, STATE.axes(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER));
-        SNAPSHOT.a = pressed(GLFW.GLFW_GAMEPAD_BUTTON_A);
-        SNAPSHOT.b = pressed(GLFW.GLFW_GAMEPAD_BUTTON_B);
-        SNAPSHOT.x = pressed(GLFW.GLFW_GAMEPAD_BUTTON_X);
-        SNAPSHOT.y = pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y);
-        SNAPSHOT.leftBumper = pressed(GLFW.GLFW_GAMEPAD_BUTTON_LEFT_BUMPER);
-        SNAPSHOT.rightBumper = pressed(GLFW.GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER);
-        return true;
-    }
-
-    private static float trigger(int index, float raw) {
-        if (raw <= -0.9F) {
-            TRIGGER_SEEN_RELEASED[index] = true;
+        for (int axis = 0; axis < PadInput.AXIS_COUNT; axis++) {
+            float raw = STATE.axes(axis);
+            if (axis == GamepadMapper.AXIS_LEFT_TRIGGER || axis == GamepadMapper.AXIS_RIGHT_TRIGGER) {
+                int index = axis - GamepadMapper.AXIS_LEFT_TRIGGER;
+                if (raw <= -0.9F) {
+                    TRIGGER_SEEN_RELEASED[index] = true;
+                }
+                raw = GamepadMapper.normaliseTrigger(raw, TRIGGER_SEEN_RELEASED[index]);
+            }
+            SNAPSHOT.axes[axis] = raw;
         }
-        return GamepadMapper.normaliseTrigger(raw, TRIGGER_SEEN_RELEASED[index]);
-    }
-
-    private static boolean pressed(int button) {
-        return STATE.buttons(button) == GLFW.GLFW_PRESS;
+        for (int button = 0; button < PadInput.BUTTON_COUNT; button++) {
+            SNAPSHOT.buttons[button] = STATE.buttons(button) == GLFW.GLFW_PRESS;
+        }
+        return true;
     }
 }
