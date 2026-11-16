@@ -7,5 +7,8 @@
   "subtitles.rlfennec.boost": "Fennec boosts",
   "subtitles.rlfennec.boost_start": "Fennec ignites its boost",
   "subtitles.rlfennec.jump": "Fennec jumps",
-  "subtitles.rlfennec.flip": "Fennec flips"
+  "subtitles.rlfennec.flip": "Fennec flips",
+  "key.rlfennec.roll_left": "Air roll left",
+  "key.rlfennec.roll_right": "Air roll right",
+  "key.rlfennec.air_roll": "Air roll (free: A / D roll)"
 }

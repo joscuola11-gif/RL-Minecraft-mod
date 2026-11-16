@@ -24,6 +24,9 @@ public final class ClientModEvents {
     @SubscribeEvent
     public static void registerKeys(RegisterKeyMappingsEvent event) {
         event.register(FennecKeys.BOOST);
+        event.register(FennecKeys.ROLL_LEFT);
+        event.register(FennecKeys.ROLL_RIGHT);
+        event.register(FennecKeys.AIR_ROLL);
     }
 
     @SubscribeEvent

@@ -8,6 +8,7 @@ public final class FennecConfig {
 
     private static final ModConfigSpec.DoubleValue BOOST_REGEN_PER_SECOND;
     private static final ModConfigSpec.DoubleValue BOOST_REGEN_DELAY_SECONDS;
+    private static final ModConfigSpec.BooleanValue INVERT_AIR_PITCH;
 
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
@@ -19,6 +20,11 @@ public final class FennecConfig {
                 .comment("Seconds to wait after the last boost before the meter starts refilling.")
                 .defineInRange("regenDelaySeconds", 2.0D, 0.0D, 60.0D);
         builder.pop();
+        builder.push("controls");
+        INVERT_AIR_PITCH = builder
+                .comment("In the air W / stick forward tips the nose down (like Rocket League). Set to true to invert it.")
+                .define("invertAirPitch", false);
+        builder.pop();
         SPEC = builder.build();
     }
 
@@ -27,6 +33,10 @@ public final class FennecConfig {
 
     public static float regenPerTick() {
         return SPEC.isLoaded() ? (float) (BOOST_REGEN_PER_SECOND.get() / 20.0D) : 0.3F;
+    }
+
+    public static boolean invertAirPitch() {
+        return SPEC.isLoaded() && INVERT_AIR_PITCH.get();
     }
 
     public static int regenDelayTicks() {

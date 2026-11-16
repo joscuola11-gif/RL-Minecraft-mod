@@ -12,18 +12,38 @@ si muove, **salta** (e fa il flip), ha **100 di boost** e in basso a destra c'è
 2. Click destro su un blocco per appoggiare l'auto, poi **click destro sull'auto** per salire. **Shift** per scendere.
 3. Guida:
 
-| Tasto | Azione |
+| Tastiera | Azione |
 |---|---|
-| `W` / `S` | accelera / frena e retromarcia |
-| `A` / `D` | sterza (in aria: ruota l'auto) |
+| `W` / `S` | a terra: accelera / frena e retromarcia. **In aria: `W` abbassa il muso, `S` lo alza** (come spingere la leva in avanti in Rocket League) |
+| `A` / `D` | a terra: sterza. In aria: **imbardata** (gira il muso a sinistra / destra) |
+| `Q` / `E` | **air roll** a sinistra / destra (in aria) |
+| `Alt sinistro` (tenuto) | **air roll libero**: finché lo tieni premuto `A` / `D` fanno rollare l'auto invece di girarla, come il pulsante "Air Roll" di Rocket League |
 | `Spazio` | **salto**. Premilo ancora in aria (entro 1,5 s) per il **doppio salto**; con `W` `S` `A` `D` premuto fai un **flip** in quella direzione, con una spinta in più |
-| `Ctrl sinistro` | **boost** (rimappabile in *Opzioni → Comandi → Rocket League Fennec*) |
-| Mouse su/giù | in aria il muso dell'auto punta dove guardi: guarda in su e usa il boost per volare |
+| `Ctrl sinistro` | **boost** |
+| Mouse su/giù | solo la visuale. **Non punta più l'auto**: il muso si controlla con `W`/`S` |
+| `Shift` | scendi |
+
+Tutti i tasti si cambiano in *Opzioni → Comandi → Rocket League Fennec*. Lì Minecraft li segnala in rosso perché `Q`, `E` e `Ctrl` sono anche "Butta oggetto", "Inventario" e "Corri": è voluto, mentre guidi quelle azioni sono disattivate (non butti l'oggetto in mano e non si apre l'inventario). In `config/rlfennec-common.toml` c'è `invertAirPitch` per invertire `W`/`S` in aria.
+
+Gli air roll ruotano l'auto attorno ai **suoi** assi, come in Rocket League: pitch attorno al fianco, yaw attorno al tetto, roll attorno al muso. Per questo dopo un roll di 90° `A`/`D` abbassano o alzano il muso, e il boost spinge sempre dove punta il muso, anche a testa in giù. Si può fare anche il giro della morte. Atterrando l'auto si raddrizza da sola.
+
+| Controller | Azione |
+|---|---|
+| Grilletto destro / sinistro | accelera / frena e retromarcia |
+| Levetta sinistra ←→ | sterza; in aria imbardata |
+| Levetta sinistra ↑↓ | in aria muso giù / su (leva in avanti = muso giù) |
+| `A` | salto, doppio salto e flip (con la levetta nella direzione del flip) |
+| `B` | **boost** |
+| `LB` / `RB` | air roll a sinistra / destra |
+| `X` (tenuto) | air roll libero: la levetta sinistra ←→ fa rollare |
+| `Y` | sali sulla Fennec più vicina (entro 4 blocchi) / scendi |
+
+Il controller funziona con qualunque pad che GLFW riconosce (Xbox, PlayStation, la maggior parte dei pad USB/Bluetooth); si può usare insieme alla tastiera. **Riguarda solo l'auto**: per camminare e per i menu serve ancora tastiera e mouse (Minecraft non supporta i controller di suo; per quello esistono mod apposite).
 
 * Il **boost** ha 100 punti e se ne vanno a 33 al secondo (100 = 3 secondi, come in Rocket League). Con il boost si supera la velocità massima (22 → 34 blocchi/s) e si spinge nella direzione del muso, anche in aria.
 * Il contatore è in basso a destra: anello arancione che si svuota, numero al centro.
 * Il boost si ricarica da solo dopo 2 secondi di inattività (6 punti/s). Si può cambiare o spegnere (`0` = come in Rocket League, niente ricarica) in `config/rlfennec-common.toml`.
-* La camera è sempre dietro l'auto (la visuale in prima persona è disattivata mentre guidi), il pilota non viene disegnato.
+* La camera sta dietro l'auto (la prima persona è disattivata mentre guidi): a terra segue il muso, in aria segue la direzione di marcia così i roll e i giri non la fanno girare a vuoto. Il pilota non viene disegnato.
 
 ## Compilare
 
@@ -77,4 +97,5 @@ Come per le barche, l'auto è simulata dal client di chi guida (sterzo senza rit
 
 * Pad del boost sul terreno (ora il boost si ricarica da solo, vedi sopra).
 * Palla e porte. È solo l'auto.
-* Non è stato provato su un server dedicato né con due giocatori; è stato provato su client singleplayer.
+* Non è stato provato su un server dedicato né con due giocatori.
+* Il controller è provato solo a livello di logica (la mappatura ha i test, la lettura di GLFW non dà errori senza pad collegato) ma non con un pad fisico. La tastiera è stata provata con veri eventi di tasto in un client Minecraft reale.

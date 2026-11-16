@@ -47,6 +47,8 @@ public class FennecEntity extends VehicleEntity {
     private static final EntityDataAccessor<Float> DATA_BOOST = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.FLOAT);
     private static final EntityDataAccessor<Boolean> DATA_BOOSTING = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Integer> DATA_JUMP_CODE = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.INT);
+    /** Roll in degrees (right side down = positive). Yaw and pitch travel with the vanilla entity rotation. */
+    private static final EntityDataAccessor<Float> DATA_ROLL = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.FLOAT);
 
     public static final int FLIP_DURATION_TICKS = 14;
     /** Radius of the wheels in blocks (rear / front are nearly equal). */
@@ -68,11 +70,15 @@ public class FennecEntity extends VehicleEntity {
     private float sentBoost = -1.0F;
     private boolean sentBoosting;
     private int sentJumpCode;
+    private float sentRoll;
     private int jumpCounter;
     private int localJumpCode;
     private int ticksSinceSend;
 
     private int underwaterTicks;
+
+    private float roll;
+    private float rollO;
 
     // client-only visuals (plain fields, never touched on a dedicated server)
     private float wheelRoll;
@@ -97,6 +103,7 @@ public class FennecEntity extends VehicleEntity {
         builder.define(DATA_BOOST, CarPhysics.MAX_BOOST);
         builder.define(DATA_BOOSTING, false);
         builder.define(DATA_JUMP_CODE, 0);
+        builder.define(DATA_ROLL, 0.0F);
     }
 
     // ------------------------------------------------------------------ tick
@@ -111,6 +118,7 @@ public class FennecEntity extends VehicleEntity {
         }
         super.tick();
         this.tickLerp();
+        this.rollO = this.roll;
 
         if (this.isControlledByLocalInstance()) {
             this.controlledTick();
@@ -118,6 +126,9 @@ public class FennecEntity extends VehicleEntity {
             this.setDeltaMovement(Vec3.ZERO);
             // keep the local copy of the meter current so that a new driver continues from it
             this.physics.boost = this.entityData.get(DATA_BOOST);
+            // cars driven by someone else: follow the roll that the server tells us
+            float target = this.entityData.get(DATA_ROLL);
+            this.roll = this.level().isClientSide ? this.roll + Mth.wrapDegrees(target - this.roll) * 0.6F : target;
         }
 
         this.resetFallDistance();
@@ -147,6 +158,7 @@ public class FennecEntity extends VehicleEntity {
         this.physics.vz = dm.z;
         this.physics.yaw = this.getYRot();
         this.physics.pitch = this.getXRot();
+        this.physics.roll = this.roll;
         this.physics.onGround = this.onGround();
         this.physics.inWater = this.isInWater();
         this.physics.regenPerTick = FennecConfig.regenPerTick();
@@ -157,6 +169,7 @@ public class FennecEntity extends VehicleEntity {
 
         this.setYRot(this.physics.yaw);
         this.setXRot(this.physics.pitch);
+        this.roll = this.physics.roll;
         this.setDeltaMovement(this.physics.vx, this.physics.vy, this.physics.vz);
         this.move(MoverType.SELF, this.getDeltaMovement());
 
@@ -175,6 +188,7 @@ public class FennecEntity extends VehicleEntity {
         } else {
             this.entityData.set(DATA_BOOST, this.physics.boost);
             this.entityData.set(DATA_BOOSTING, false);
+            this.entityData.set(DATA_ROLL, this.roll);
         }
     }
 
@@ -182,22 +196,25 @@ public class FennecEntity extends VehicleEntity {
         int code = this.localJumpCode;
         boolean changed = this.physics.boosting != this.sentBoosting
                 || code != this.sentJumpCode
-                || Math.abs(this.physics.boost - this.sentBoost) >= 1.0F;
+                || Math.abs(this.physics.boost - this.sentBoost) >= 1.0F
+                || Math.abs(Mth.wrapDegrees(this.roll - this.sentRoll)) >= 1.0F;
         this.ticksSinceSend++;
         if (changed || this.ticksSinceSend >= 20) {
-            PacketDistributor.sendToServer(new CarControlPayload(this.physics.boost, this.physics.boosting, code));
+            PacketDistributor.sendToServer(new CarControlPayload(this.physics.boost, this.physics.boosting, code, this.roll));
             this.sentBoost = this.physics.boost;
             this.sentBoosting = this.physics.boosting;
             this.sentJumpCode = code;
+            this.sentRoll = this.roll;
             this.ticksSinceSend = 0;
         }
     }
 
     /** Called on the server when the driver's client reports its meter and jumps. */
-    public void applyClientControl(float boost, boolean boosting, int jumpCode) {
-        if (Float.isNaN(boost)) {
+    public void applyClientControl(float boost, boolean boosting, int jumpCode, float roll) {
+        if (!Float.isFinite(boost) || !Float.isFinite(roll)) {
             return;
         }
+        this.entityData.set(DATA_ROLL, Mth.wrapDegrees(roll));
         this.entityData.set(DATA_BOOST, Mth.clamp(boost, 0.0F, CarPhysics.MAX_BOOST));
         this.entityData.set(DATA_BOOSTING, boosting);
         this.entityData.set(DATA_JUMP_CODE, jumpCode);
@@ -206,10 +223,12 @@ public class FennecEntity extends VehicleEntity {
     // ------------------------------------------------------------------ client input
 
     /** Called every client tick by the input handler of the local driver. */
-    public void setClientInput(float throttle, float steer, float pitchTarget, boolean jumpPressed, boolean boost) {
+    public void setClientInput(float throttle, float steer, float pitch, float roll, boolean airRollFree, boolean jumpPressed, boolean boost) {
         this.clientInput.throttle = throttle;
         this.clientInput.steer = steer;
-        this.clientInput.pitchTarget = pitchTarget;
+        this.clientInput.pitch = pitch;
+        this.clientInput.roll = roll;
+        this.clientInput.airRollFree = airRollFree;
         this.clientInput.boost = boost;
         if (jumpPressed) {
             this.clientInput.jump = true;
@@ -252,19 +271,22 @@ public class FennecEntity extends VehicleEntity {
     }
 
     private void spawnBoostFlames() {
-        double yaw = Math.toRadians(this.getYRot());
-        double pitch = Math.toRadians(this.getXRot());
-        double cp = Math.cos(pitch);
-        Vec3 forward = new Vec3(-Math.sin(yaw) * cp, -Math.sin(pitch), Math.cos(yaw) * cp);
-        Vec3 right = new Vec3(-Math.cos(yaw), 0.0D, -Math.sin(yaw));
-        Vec3 up = right.cross(forward);
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        CarPhysics.basis(this.getYRot(), this.getXRot(), this.getRoll(1.0F), f, u, r);
+        Vec3 forward = new Vec3(f[0], f[1], f[2]);
+        Vec3 right = new Vec3(r[0], r[1], r[2]);
+        Vec3 up = new Vec3(u[0], u[1], u[2]);
         Vec3 velocity = this.getControllingPassenger() instanceof Player ? this.getDeltaMovement() : Vec3.ZERO;
+        // the car pitches / rolls around its centre of mass, 0.45 blocks above the ground
+        Vec3 centre = this.position().add(0.0D, 0.45D, 0.0D);
 
         for (int side = -1; side <= 1; side += 2) {
-            Vec3 origin = this.position()
+            Vec3 origin = centre
                     .add(forward.scale(-1.75D))
                     .add(right.scale(0.34D * side))
-                    .add(up.scale(0.55D));
+                    .add(up.scale(0.10D));
             for (int i = 0; i < 3; i++) {
                 Vec3 spread = new Vec3(this.random.nextGaussian(), this.random.nextGaussian(), this.random.nextGaussian()).scale(0.03D);
                 Vec3 v = forward.scale(-0.35D).add(velocity).add(spread);
@@ -331,6 +353,11 @@ public class FennecEntity extends VehicleEntity {
 
     public float getSteerAngle(float partialTick) {
         return Mth.lerp(partialTick, this.steerAngleO, this.steerAngle);
+    }
+
+    /** Roll in degrees, right side down = positive. */
+    public float getRoll(float partialTick) {
+        return Mth.rotLerp(partialTick, this.rollO, this.roll);
     }
 
     public int getFlipType() {
