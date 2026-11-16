@@ -7,7 +7,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "2";
+    private static final String PROTOCOL_VERSION = "3";
 
     private ModNetwork() {
     }
@@ -28,7 +28,7 @@ public final class ModNetwork {
     private static void handleCarControl(CarControlPayload payload, IPayloadContext context) {
         Player player = context.player();
         if (player.getVehicle() instanceof FennecEntity car && car.getControllingPassenger() == player) {
-            car.applyClientControl(payload.boost(), payload.boosting(), payload.jumpCode(), payload.roll());
+            car.applyClientControl(payload.boost(), payload.boosting(), payload.jumpCode(), payload.orientation());
         }
     }
 }

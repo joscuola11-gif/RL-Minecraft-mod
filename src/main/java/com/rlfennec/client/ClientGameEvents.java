@@ -19,6 +19,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3f;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -137,7 +138,7 @@ public final class ClientGameEvents {
         boolean jump = jumpDown && !jumpHeld;
         jumpHeld = jumpDown;
 
-        car.setClientInput(throttle, steer, pitch, roll, airRollFree, jump, boost);
+        car.setClientInput(throttle, steer, pitch, roll, airRollFree, jump, jumpDown, boost);
 
         updateCamera(car);
     }
@@ -208,14 +209,24 @@ public final class ClientGameEvents {
      */
     private static void updateCamera(FennecEntity car) {
         float carYaw = car.getYRot();
-        float target = carYaw;
-        if (!car.onGround()) {
+        float target = cameraYaw;
+        if (car.onGround()) {
+            // behind the car, unless it is just landing upside down / on its nose (its yaw is meaningless then)
+            if (car.getOrientation(1.0F).transform(new Vector3f(0.0F, 1.0F, 0.0F)).y > 0.5F) {
+                target = carYaw;
+            }
+        } else {
+            // In the air the nose can swing round (flips, loops, half flips): the camera ignores that and follows
+            // where the car is travelling, or stays put when it hardly moves or travels backwards.
             Vec3 v = car.getDeltaMovement();
             double horizontal = Math.sqrt(v.x * v.x + v.z * v.z);
             if (horizontal > 0.15D) {
                 float travelYaw = (float) (Mth.atan2(-v.x, v.z) * Mth.RAD_TO_DEG);
-                float weight = (float) Mth.clamp((horizontal - 0.15D) / 0.35D, 0.0D, 1.0D);
-                target = carYaw + Mth.wrapDegrees(travelYaw - carYaw) * weight;
+                float delta = Mth.wrapDegrees(travelYaw - cameraYaw);
+                if (Math.abs(delta) < 100.0F) {
+                    float weight = (float) Mth.clamp((horizontal - 0.15D) / 0.35D, 0.0D, 1.0D);
+                    target = cameraYaw + delta * weight;
+                }
             }
         }
         cameraYawO = cameraYaw;

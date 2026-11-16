@@ -39,10 +39,18 @@ public final class CarPhysics {
     /** Fraction of the sideways velocity that survives each tick (lower = more grip). */
     public static final double LATERAL_GRIP = 0.20D;
 
-    public static final double JUMP_VELOCITY = 0.55D;
+    /** A tap on the jump key gives a short hop of this speed; holding the key adds more for up to 6 ticks (RL's variable jump height). */
+    public static final double JUMP_VELOCITY = 0.30D;
+    public static final double JUMP_HOLD_ACCEL = 0.050D;
+    public static final int JUMP_HOLD_TICKS = 6;
     public static final double DOUBLE_JUMP_VELOCITY = 0.45D;
-    /** A dodge keeps only half of the vertical speed and adds this, so a dodge near the ground lands quickly (wave dash). */
-    public static final double DODGE_LIFT = 0.12D;
+    /**
+     * A dodge keeps only a fifth of the vertical speed. High above the road it also gives this much lift, so that the
+     * flip has time to finish; close to the road it gives none, so the car lands quickly (the wave dash).
+     */
+    public static final double DODGE_LIFT = 0.38D;
+    /** Below this height above the road a dodge gives no lift, above it the lift grows to the full amount over the next 1.2 blocks. */
+    public static final double DODGE_LIFT_MIN_HEIGHT = 0.8D;
     public static final double DODGE_IMPULSE = 0.45D;
     /** Ticks after leaving the ground in which the second jump is still available (1.5 s). */
     public static final int DOUBLE_JUMP_WINDOW = 30;
@@ -51,31 +59,35 @@ public final class CarPhysics {
     public static final float BOOST_USE_PER_TICK = MAX_BOOST / 60.0F;
 
     /** Maximum rotation speed in the air, degrees per tick, about the car's right / up / forward axis. */
-    public static final float AIR_PITCH_RATE = 7.0F;
-    public static final float AIR_YAW_RATE = 5.0F;
-    public static final float AIR_ROLL_RATE = 12.0F;
+    public static final float AIR_PITCH_RATE = 9.0F;
+    public static final float AIR_YAW_RATE = 7.0F;
+    public static final float AIR_ROLL_RATE = 16.0F;
     /** How fast the rotation speed follows the input (1 = instantly). Without input the car stops turning quickly. */
     public static final float AIR_ANGULAR_RESPONSE = 0.4F;
     public static final double WATER_DRAG = 0.86D;
 
     /**
-     * A dodge turns the car 360 degrees. The rotation eases in (13, 18, 22, 27, then 30 degrees per tick) so that
-     * touching the road a few ticks after the dodge still finds the car nearly level (the wave dash); it is over after
-     * 15 ticks (0.75 s).
+     * A dodge turns the car 360 degrees, 30 per tick (0.6 s). Close to the road the rotation eases in (9, 13, 17, 21,
+     * 26, then 30 degrees per tick) so that touching down a few ticks after the dodge still finds the car nearly level
+     * (the wave dash). The dodge is over after 16 ticks.
      */
-    public static final int DODGE_TICKS = 15;
+    public static final int DODGE_TICKS = 16;
     public static final float DODGE_ROTATION_RATE = 30.0F;
     /** How far the stick has to be pushed in the air for a second jump to become a dodge (otherwise it is a plain double jump). */
     public static final float DODGE_DEAD_ZONE = 0.5F;
-    /** Opposite input beyond this cancels the flip (the car rotates back to how it was). */
+    public static final int CANCEL_GRACE_TICKS = 6;
+    /** Opposite input beyond this cancels the flip (the rotation stops where it is). */
     public static final float FLIP_CANCEL_THRESHOLD = 0.4F;
 
     /** Wave dash: landing within this many ticks of a dodge, nearly level, gives a burst of speed. */
-    public static final int WAVE_DASH_WINDOW = 10;
-    public static final double WAVE_DASH_IMPULSE = 0.55D;
-    public static final double WAVE_DASH_MAX_SPEED = 1.45D;
-    /** Landing with the roof facing down (roof direction y below this) is a crash landing: the car is stood up again. */
-    public static final double CRASH_LANDING_ROOF_UP = 0.15D;
+    public static final int WAVE_DASH_WINDOW = 12;
+    public static final double WAVE_DASH_IMPULSE = 0.60D;
+    public static final double WAVE_DASH_MAX_SPEED = 1.55D;
+    /** After a wave dash the extra speed bleeds off slowly for this many ticks. */
+    public static final int WAVE_DASH_GRACE_TICKS = 20;
+    public static final double WAVE_DASH_OVERSPEED_DECAY = 0.004D;
+    /** Landing with the roof facing down (roof direction y below this, about 100 degrees from upright) is a crash landing: the car is stood up again. */
+    public static final double CRASH_LANDING_ROOF_UP = -0.2D;
 
     public static final int EVENT_NONE = 0;
     public static final int EVENT_JUMP = 1;
@@ -102,6 +114,8 @@ public final class CarPhysics {
         public boolean airRollFree;
         /** True only on the tick on which the jump key went down. */
         public boolean jump;
+        /** True while the jump key is held: a longer hold gives a higher first jump. */
+        public boolean jumpHeld;
         /** True while the boost key is held. */
         public boolean boost;
 
@@ -112,6 +126,7 @@ public final class CarPhysics {
             roll = 0.0F;
             airRollFree = false;
             jump = false;
+            jumpHeld = false;
             boost = false;
         }
     }
@@ -125,6 +140,8 @@ public final class CarPhysics {
     public float roll;
     public boolean onGround;
     public boolean inWater;
+    /** Height of the car above the road below it, in blocks (the entity measures it; it only matters in the air). */
+    public double groundDistance = 10.0D;
 
     // ---- own state ----
     public float steer;
@@ -151,8 +168,12 @@ public final class CarPhysics {
     /** How far the dodge has turned the car, degrees, 0..360. */
     private float dodgeAngle;
     private boolean dodging;
-    /** The driver pushed the opposite way: the flip is being undone and will not restart. */
-    private boolean dodgeCancelled;
+    private int jumpHoldTicks;
+    /** 0 when the dodge started on the road, 1 when it started high above it (decides how gently the flip starts). */
+    private double dodgeHeightFactor;
+    private int overspeedGrace;
+    /** After a flip cancel the input that cancelled it must not also tip the car the other way for a few ticks. */
+    private int cancelGrace;
     /** Ticks since the last dodge started (large when there was none). */
     public int ticksSinceDodge = 1000;
     private boolean wasOnGround = true;
@@ -198,6 +219,9 @@ public final class CarPhysics {
         }
 
         ticksSinceDodge = Math.min(ticksSinceDodge + 1, 1000);
+        if (overspeedGrace > 0) {
+            overspeedGrace--;
+        }
         boolean grounded = onGround && !inWater;
         // the stick that starts a dodge must not also steer the car on this very tick
         dodgeStartsThisTick = in.jump && !grounded && jumpsUsed == 1 && airTicks + 1 <= DOUBLE_JUMP_WINDOW
@@ -269,7 +293,7 @@ public final class CarPhysics {
         if (boosting) {
             fs = Math.min(fs, MAX_BOOST_SPEED);
         } else if (fs > MAX_SPEED) {
-            fs = Math.max(MAX_SPEED, fs - OVERSPEED_DECAY);
+            fs = Math.max(MAX_SPEED, fs - (overspeedGrace > 0 ? WAVE_DASH_OVERSPEED_DECAY : OVERSPEED_DECAY));
         }
         fs = Math.max(fs, -MAX_REVERSE_SPEED);
         ls *= LATERAL_GRIP;
@@ -324,6 +348,15 @@ public final class CarPhysics {
             vz += nose[2] * BOOST_ACCELERATION;
         }
 
+        if (jumpHoldTicks > 0) {
+            if (in.jumpHeld && vy > 0.0D && jumpsUsed == 1) {
+                vy += JUMP_HOLD_ACCEL;
+                jumpHoldTicks--;
+            } else {
+                jumpHoldTicks = 0;
+            }
+        }
+
         vy -= GRAVITY;
         vx *= 0.998D;
         vz *= 0.998D;
@@ -362,17 +395,33 @@ public final class CarPhysics {
             double sideInput = clamp(in.steer + in.roll, -1.0F, 1.0F);
             double against = -(pitchInput * dodgeForward + sideInput * dodgeRight);
             if (against > FLIP_CANCEL_THRESHOLD) {
-                dodgeCancelled = true;
+                // flip cancel: the dodge stops turning the car right where it is (cancel at the start = no flip at all,
+                // cancel at half way = a half flip, and the driver finishes with air roll)
+                dodging = false;
+                cancelGrace = CANCEL_GRACE_TICKS;
+            } else {
+                float rate = DODGE_ROTATION_RATE * Math.min(1.0F, 0.15F + 0.14F * ticksSinceDodge + (float) dodgeHeightFactor);
+                dodgeStep = Math.min(rate, 360.0F - dodgeAngle);
+                dodgeAngle += dodgeStep;
+                if (dodgeAngle >= 360.0F || ticksSinceDodge >= DODGE_TICKS) {
+                    dodging = false; // the dodge is over, normal air control is back
+                }
+                pitchInput = 0.0F;
+                rollInput = 0.0F;
+                yawInput = 0.0F;
             }
-            float rate = DODGE_ROTATION_RATE * Math.min(1.0F, 0.3F + 0.15F * ticksSinceDodge);
-            dodgeStep = dodgeCancelled ? -Math.min(rate, dodgeAngle) : Math.min(rate, 360.0F - dodgeAngle);
-            dodgeAngle += dodgeStep;
-            if (ticksSinceDodge >= DODGE_TICKS) {
-                dodging = false; // the dodge is over, normal air control is back
+        }
+        if (cancelGrace > 0) {
+            cancelGrace--;
+            // right after a cancel, the input that pushes against the dodge must not also turn the car the other way
+            if (dodgeForward * pitchInput < -0.3D) {
+                pitchInput = 0.0F;
             }
-            pitchInput = 0.0F;
-            rollInput = 0.0F;
-            yawInput = 0.0F;
+            double side = in.steer + in.roll;
+            if (dodgeRight * side < -0.3D) {
+                yawInput = 0.0F;
+                rollInput = 0.0F;
+            }
         }
 
         angularPitch += (pitchInput * AIR_PITCH_RATE * airPitchScale - angularPitch) * AIR_ANGULAR_RESPONSE;
@@ -504,6 +553,7 @@ public final class CarPhysics {
         boolean grounded = onGround && !inWater;
         if (grounded) {
             vy = JUMP_VELOCITY;
+            jumpHoldTicks = JUMP_HOLD_TICKS;
             jumpsUsed = 1;
             airTicks = 0;
             event = EVENT_JUMP;
@@ -515,6 +565,7 @@ public final class CarPhysics {
         if (jumpsUsed == 0) {
             // drove off a ledge: the first jump is still available
             vy = JUMP_VELOCITY * 0.9D;
+            jumpHoldTicks = JUMP_HOLD_TICKS;
             jumpsUsed = 1;
             event = EVENT_JUMP;
             return;
@@ -525,7 +576,7 @@ public final class CarPhysics {
 
         // a dodge needs the stick (or keys) pushed in some direction; without it this is a plain double jump
         double df = in.pitch;                      // forward = nose down input
-        double dr = in.airRollFree ? 0.0D : in.steer;
+        double dr = in.steer;                      // (also while the free air roll button is held)
         double magnitude = dodgeMagnitude(in);
         if (magnitude < DODGE_DEAD_ZONE) {
             vy = DOUBLE_JUMP_VELOCITY;
@@ -542,7 +593,7 @@ public final class CarPhysics {
         double rz = fx;
         double side = dodgeRight * strength * DODGE_IMPULSE * 0.8D;
         double front = dodgeForward * strength * DODGE_IMPULSE * (dodgeForward < 0.0D ? 0.8D : 1.0D);
-        vy = Math.max(vy * 0.5D, -0.1D) + DODGE_LIFT;
+        vy = Math.max(vy * 0.2D, -0.1D) + DODGE_LIFT * clamp01((groundDistance - DODGE_LIFT_MIN_HEIGHT) / 1.2D);
         vx += fx * front + rx * side;
         vz += fz * front + rz * side;
         double h = horizontalSpeed();
@@ -553,7 +604,7 @@ public final class CarPhysics {
         }
 
         dodging = true;
-        dodgeCancelled = false;
+        dodgeHeightFactor = clamp01((groundDistance - DODGE_LIFT_MIN_HEIGHT) / 1.2D);
         dodgeAngle = 0.0F;
         ticksSinceDodge = 0;
         if (Math.abs(dodgeForward) >= Math.abs(dodgeRight)) {
@@ -598,12 +649,13 @@ public final class CarPhysics {
         vx += fx * delta;
         vz += fz * delta;
         ticksSinceDodge = 1000; // only once per dodge
+        overspeedGrace = WAVE_DASH_GRACE_TICKS;
         event = EVENT_WAVE_DASH;
     }
 
     private static double dodgeMagnitude(Input in) {
         double df = in.pitch;
-        double dr = in.airRollFree ? 0.0D : in.steer;
+        double dr = in.steer;
         return Math.sqrt(df * df + dr * dr);
     }
 

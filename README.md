@@ -35,39 +35,14 @@ si muove, **salta** (e fa il flip), ha **100 di boost** e in basso a destra c'è
 
 Quattro regolatori (da 0,2 a 3,0, 1,0 è la velocità normale): sterzata a terra, beccheggio in aria, imbardata in aria e air roll. Si cambiano dal bottone **"Controller e impostazioni Fennec..."** in *Opzioni → Comandi → Tasti*, poi **"Sterzata e altre opzioni..."** (oppure *Mods → Rocket League Fennec → Config*), sezione `handling`. Sono nel file `config/rlfennec-client.toml` e valgono per te, non per gli altri giocatori.
 
-### Flip, flip cancel e wave dash
+### Salto, flip, flip cancel, half flip e wave dash
 
-* **Flip (dodge)**: salta, poi premi di nuovo salto **spingendo una direzione**: avanti, indietro, sinistra, destra o diagonale. L'auto fa un giro completo in quella direzione (0,75 s) e prende una spinta di velocità. Senza direzione è solo un doppio salto. Con l'air roll libero premuto non parte nessun flip.
-* **Flip cancel**: durante il flip tieni premuta la direzione **opposta** (per esempio dopo un flip in avanti, indietro): la rotazione si ferma e l'auto torna com'era, ma la spinta di velocità resta. Se la annulli a metà torna in piano e non riparte.
-* **Wave dash**: fai il flip poco prima di toccare terra (qualche decimo di secondo) e atterra con le ruote verso il basso: il flip viene annullato dal terreno e l'auto riparte con un impulso di velocità sopra il normale, senza usare boost. Se invece atterri sul tetto o sul muso l'auto si rimette in piedi e continua nella direzione in cui andava.
-* Il flip è una rotazione vera, non un'animazione: durante il giro il boost spinge dove punta il muso in quel momento.
-
-**Controller**: ogni azione si può mettere su qualunque tasto, levetta (in una direzione) o grilletto.
-1. Apri la schermata con il bottone **"Comandi controller Fennec..."** in alto a sinistra in *Opzioni → Comandi → Tasti* (oppure *Mods → Rocket League Fennec → Config*).
-2. Clicca il comando, poi premi il tasto o muovi la levetta/il grilletto che vuoi (`Esc` annulla, `Canc` toglie l'assegnazione). Ricorda che i pad PlayStation hanno `A` = Croce, `B` = Cerchio, `X` = Quadrato, `Y` = Triangolo, `LB`/`RB` = L1/R1, `LT`/`RT` = L2/R2.
-3. Due comandi sullo stesso input compaiono in rosso, come per la tastiera.
-
-Le assegnazioni sono salvate in `config/rlfennec-client.toml` (formato `"button:0"`, `"axis:5:+"`, `"none"`, descritto nel file), si possono anche modificare a mano.
-
-Gli air roll ruotano l'auto attorno ai **suoi** assi, come in Rocket League: pitch attorno al fianco, yaw attorno al tetto, roll attorno al muso. Per questo dopo un roll di 90° `A`/`D` abbassano o alzano il muso, e il boost spinge sempre dove punta il muso, anche a testa in giù. Si può fare anche il giro della morte. Atterrando l'auto si raddrizza da sola.
-
-| Controller | Azione |
-|---|---|
-| Grilletto destro / sinistro | accelera / frena e retromarcia |
-| Levetta sinistra ←→ | sterza; in aria imbardata |
-| Levetta sinistra ↑↓ | in aria muso giù / su (leva in avanti = muso giù) |
-| `A` | salto, doppio salto e flip (con la levetta nella direzione del flip) |
-| `B` | **boost** |
-| `LB` / `RB` | air roll a sinistra / destra |
-| `X` (tenuto) | air roll libero: la levetta sinistra ←→ fa rollare |
-| `Y` | sali sulla Fennec più vicina (entro 4 blocchi) / scendi |
-
-Il controller funziona con qualunque pad che GLFW riconosce (Xbox, PlayStation, la maggior parte dei pad USB/Bluetooth); si può usare insieme alla tastiera. **Riguarda solo l'auto**: per camminare e per i menu serve ancora tastiera e mouse (Minecraft non supporta i controller di suo; per quello esistono mod apposite).
-
-* Il **boost** ha 100 punti e se ne vanno a 33 al secondo (100 = 3 secondi, come in Rocket League). Con il boost si supera la velocità massima (22 → 34 blocchi/s) e si spinge nella direzione del muso, anche in aria.
-* Il contatore è in basso a destra: anello arancione che si svuota, numero al centro.
-* Il boost si ricarica da solo dopo 2 secondi di inattività (6 punti/s). Si può cambiare o spegnere (`0` = come in Rocket League, niente ricarica) in `config/rlfennec-common.toml`.
-* La camera sta dietro l'auto (la prima persona è disattivata mentre guidi): a terra segue il muso, in aria segue la direzione di marcia così i roll e i giri non la fanno girare a vuoto. Il pilota non viene disegnato.
+* **Altezza del salto**: un tocco su salto è un saltino, tenendolo premuto (fino a 0,3 s) il salto sale fino al massimo, come in Rocket League.
+* **Flip (dodge)**: dopo il primo salto, premi di nuovo salto **spingendo una direzione**: avanti, indietro, sinistra, destra o diagonale (tastiera o levetta). L'auto fa un giro completo in quella direzione (0,6 s) e prende una spinta di velocità. Senza direzione è solo un doppio salto. **Funziona anche tenendo premuto l'air roll libero** (nel tuo caso ZL).
+* **Flip cancel**: durante il flip tieni la direzione **opposta**: la rotazione si ferma **dov'è arrivata** e la spinta di velocità resta. Se la tieni dall'inizio non fai nessun giro, se la tieni a metà l'auto resta a metà. Per qualche istante dopo il cancel quel tasto non fa anche girare l'auto dall'altra parte.
+* **Half flip**: vai in retromarcia, salto, flip all'indietro, quando l'auto è capovolta (circa a metà del giro) fai il cancel e con l'air roll (`Q`/`E`, o l'air roll libero) rimetti le ruote in basso: l'auto ora guarda nella direzione in cui sta andando.
+* **Wave dash**: fai il flip quando sei **vicino a terra** (per esempio con un saltino) e atterra con le ruote verso il basso entro circa mezzo secondo: il flip viene annullato dal terreno, l'auto riparte con un impulso di velocità sopra il normale (e lo tiene per un po') senza usare boost. Più in alto il flip ha più tempo e finisce il giro. Se invece atterri sul tetto o sul muso l'auto si rimette in piedi e continua nella direzione in cui andava.
+* Il flip è una rotazione vera, non un'animazione: durante il giro il boost spinge dove punta il muso in quel momento. Gli altri giocatori vedono la stessa rotazione.
 
 ## Compilare
 

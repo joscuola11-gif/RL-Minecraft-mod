@@ -19,6 +19,7 @@ class CarPhysicsTest {
         }
 
         void tick() {
+            car.groundDistance = Math.max(0.0D, y);
             car.step(in);
             in.jump = false;
             x += car.vx;
@@ -96,6 +97,7 @@ class CarPhysicsTest {
         Sim s = new Sim();
         s.run(2);
         s.in.jump = true;
+        s.in.jumpHeld = true;
         s.tick();
         assertEquals(CarPhysics.EVENT_JUMP, s.car.event);
         double apex = 0.0D;
@@ -236,11 +238,11 @@ class CarPhysicsTest {
     void pitchKeysTipTheNoseDownAndUpAndStopWhenReleased() {
         Sim s = airborne();
         s.in.pitch = 1.0F; // W: nose down
-        s.run(10);
+        s.run(6);
         assertTrue(s.car.pitch > 30.0F, "pitch " + s.car.pitch);
         s.in.pitch = -1.0F; // S: nose up
-        s.run(30);
-        assertTrue(s.car.pitch < -30.0F, "pitch " + s.car.pitch);
+        s.run(14);
+        assertTrue(s.car.pitch < -20.0F, "pitch " + s.car.pitch);
         s.in.pitch = 0.0F;
         s.run(12);
         float rest = s.car.pitch;
@@ -497,15 +499,15 @@ class CarPhysicsTest {
         dodge(cancelled, 1.0F, 0.0F);
         dodge(flipped, 1.0F, 0.0F);
         float maxTilt = 0.0F;
-        for (int i = 0; i < CarPhysics.DODGE_TICKS; i++) {
+        for (int i = 0; i < CarPhysics.CANCEL_GRACE_TICKS - 1; i++) {
             cancelled.in.pitch = -1.0F; // stick back
             cancelled.tick();
             flipped.tick();
             maxTilt = Math.max(maxTilt, Math.abs(wrap(cancelled.car.pitch)));
         }
         cancelled.in.pitch = 0.0F;
-        cancelled.run(6);
-        flipped.run(6);
+        cancelled.run(CarPhysics.DODGE_TICKS);
+        flipped.run(CarPhysics.DODGE_TICKS);
         assertTrue(maxTilt < 10.0F, "the cancelled flip still tipped " + maxTilt);
         assertEquals(0.0F, Math.abs(wrap(cancelled.car.pitch)), 3.0F);
         assertEquals(flipped.car.vx, cancelled.car.vx, 1e-9D * 100);
@@ -513,17 +515,111 @@ class CarPhysicsTest {
     }
 
     @Test
-    void cancellingHalfwayTurnsTheCarBackToLevelAndItStaysThere() {
+    void cancellingStopsTheFlipWhereItIsAndItDoesNotRestart() {
         Sim s = midAir();
         dodge(s, 1.0F, 0.0F);
-        s.run(3); // about a quarter of the flip
-        assertTrue(s.car.pitch > 50.0F);
+        s.run(2); // about a sixth of the flip
+        float pitchAtCancel = s.car.pitch;
+        assertTrue(pitchAtCancel > 50.0F);
         s.in.pitch = -1.0F;
-        s.run(4);
-        assertEquals(0.0F, Math.abs(wrap(s.car.pitch)), 3.0F);
+        s.tick();
+        float stopped = s.car.pitch;
+        s.run(CarPhysics.CANCEL_GRACE_TICKS - 2);
+        assertEquals(stopped, s.car.pitch, 3.0F, "the nose must stay where the cancel stopped it");
         s.in.pitch = 0.0F; // let go: the flip must not start again
         s.run(10);
-        assertEquals(0.0F, Math.abs(wrap(s.car.pitch)), 3.0F);
+        assertEquals(stopped, s.car.pitch, 3.0F);
+    }
+
+    @Test
+    void halfFlipEndsWheelsDownFacingTheOtherWay() {
+        Sim s = midAir();
+        s.car.vz = -0.3D; // reversing: the car travels backwards while facing +z
+        dodge(s, -1.0F, 0.0F); // back flip
+        int guard = 0;
+        while (roofUp(s.car) > -0.97D && guard++ < 30) {
+            s.tick(); // flip until the car is nearly upside down
+        }
+        s.in.pitch = 1.0F; // stick forward: cancel the flip
+        s.tick();
+        s.in.pitch = 0.0F;
+        s.in.roll = 1.0F; // air roll the wheels back down
+        guard = 0;
+        while (roofUp(s.car) < 0.97D && guard++ < 30) {
+            s.tick();
+        }
+        s.in.roll = 0.0F;
+        s.run(6);
+        double[] nose = CarPhysics.forward(s.car.yaw, s.car.pitch);
+        assertTrue(roofUp(s.car) > 0.9D, "roof up " + roofUp(s.car));
+        assertTrue(nose[2] < -0.7D, "the car must now face -z, nose = " + java.util.Arrays.toString(nose));
+        assertTrue(Math.abs(nose[1]) < 0.5D, "nose should be roughly level, y = " + nose[1]);
+    }
+
+    @Test
+    void aFlipCanBeDoneWhileTheFreeAirRollButtonIsHeld() {
+        Sim s = midAir();
+        s.in.airRollFree = true;
+        dodge(s, 1.0F, 0.0F);
+        assertEquals(CarPhysics.FLIP_FRONT, s.car.flip);
+        double lowestNose = 1.0D;
+        for (int i = 0; i < CarPhysics.DODGE_TICKS; i++) {
+            s.tick();
+            lowestNose = Math.min(lowestNose, noseUp(s.car));
+        }
+        assertTrue(lowestNose < -0.8D, "it flipped: " + lowestNose);
+
+        Sim side = midAir();
+        side.in.airRollFree = true;
+        dodge(side, 0.0F, 1.0F);
+        assertEquals(CarPhysics.FLIP_RIGHT, side.car.flip);
+        side.run(6);
+        assertTrue(side.car.roll > 40.0F, "roll " + side.car.roll);
+    }
+
+    @Test
+    void aTapIsAShortHopAndHoldingGivesTheFullJump() {
+        double[] apex = new double[2];
+        for (int held = 0; held < 2; held++) {
+            Sim s = new Sim();
+            s.run(2);
+            s.in.jump = true;
+            s.in.jumpHeld = held == 1;
+            for (int i = 0; i < 40; i++) {
+                s.tick();
+                apex[held] = Math.max(apex[held], s.y);
+            }
+        }
+        assertTrue(apex[0] < 1.0D, "tap apex " + apex[0]);
+        assertTrue(apex[1] > 1.8D && apex[1] < 3.2D, "hold apex " + apex[1]);
+    }
+
+    @Test
+    void waveDashFromAShortHopWithTheDodgeRightAfterTheJump() {
+        double[] after = new double[2];
+        boolean sawEvent = false;
+        for (int dodgeIt = 0; dodgeIt < 2; dodgeIt++) {
+            Sim s = new Sim();
+            s.in.throttle = 1.0F;
+            s.run(40);
+            s.in.throttle = 0.0F;
+            s.in.jump = true;
+            s.tick(); // tap: short hop
+            s.in.jumpHeld = false;
+            s.tick();
+            if (dodgeIt == 1) {
+                dodge(s, 1.0F, 0.0F);
+            }
+            int guard = 0;
+            while (!s.car.onGround && guard++ < 40) {
+                s.tick();
+            }
+            s.tick();
+            sawEvent |= s.car.event == CarPhysics.EVENT_WAVE_DASH;
+            after[dodgeIt] = s.car.forwardSpeed();
+        }
+        assertTrue(sawEvent, "the landing right after the dodge must be a wave dash");
+        assertTrue(after[1] > after[0] + 0.25D, "speed without " + after[0] + " with " + after[1]);
     }
 
     @Test
@@ -532,7 +628,7 @@ class CarPhysicsTest {
         Sim b = midAir();
         dodge(a, 1.0F, 0.0F);
         dodge(b, 1.0F, 0.0F);
-        for (int i = 0; i < CarPhysics.DODGE_TICKS - 1; i++) {
+        for (int i = 0; i < 10; i++) {
             b.in.pitch = 1.0F; // pushing the same way adds nothing extra
             a.tick();
             b.tick();

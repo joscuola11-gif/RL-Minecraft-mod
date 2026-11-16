@@ -33,11 +33,15 @@ import net.minecraft.world.entity.vehicle.DismountHelper;
 import net.minecraft.world.entity.vehicle.VehicleEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.joml.Matrix3f;
 import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 /**
  * The drivable Fennec.
@@ -50,8 +54,8 @@ public class FennecEntity extends VehicleEntity {
     private static final EntityDataAccessor<Float> DATA_BOOST = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.FLOAT);
     private static final EntityDataAccessor<Boolean> DATA_BOOSTING = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Integer> DATA_JUMP_CODE = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.INT);
-    /** Roll in degrees (right side down = positive). Yaw and pitch travel with the vanilla entity rotation. */
-    private static final EntityDataAccessor<Float> DATA_ROLL = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.FLOAT);
+    /** The full orientation of the body, so that other players see flips and loops exactly as the driver does. */
+    private static final EntityDataAccessor<Quaternionf> DATA_ORIENTATION = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.QUATERNION);
 
     /** Radius of the wheels in blocks (rear / front are nearly equal). */
     public static final float WHEEL_RADIUS = 0.32F;
@@ -72,7 +76,7 @@ public class FennecEntity extends VehicleEntity {
     private float sentBoost = -1.0F;
     private boolean sentBoosting;
     private int sentJumpCode;
-    private float sentRoll;
+    private final Quaternionf sentOrientation = new Quaternionf();
     private int jumpCounter;
     private int localJumpCode;
     private int ticksSinceSend;
@@ -80,7 +84,6 @@ public class FennecEntity extends VehicleEntity {
     private int underwaterTicks;
 
     private float roll;
-    private float rollO;
 
     // client-only visuals (plain fields, never touched on a dedicated server)
     private float wheelRoll;
@@ -106,7 +109,7 @@ public class FennecEntity extends VehicleEntity {
         builder.define(DATA_BOOST, CarPhysics.MAX_BOOST);
         builder.define(DATA_BOOSTING, false);
         builder.define(DATA_JUMP_CODE, 0);
-        builder.define(DATA_ROLL, 0.0F);
+        builder.define(DATA_ORIENTATION, new Quaternionf());
     }
 
     // ------------------------------------------------------------------ tick
@@ -121,7 +124,6 @@ public class FennecEntity extends VehicleEntity {
         }
         super.tick();
         this.tickLerp();
-        this.rollO = this.roll;
 
         if (this.isControlledByLocalInstance()) {
             this.controlledTick();
@@ -129,9 +131,7 @@ public class FennecEntity extends VehicleEntity {
             this.setDeltaMovement(Vec3.ZERO);
             // keep the local copy of the meter current so that a new driver continues from it
             this.physics.boost = this.entityData.get(DATA_BOOST);
-            // cars driven by someone else: follow the roll that the server tells us
-            float target = this.entityData.get(DATA_ROLL);
-            this.roll = this.level().isClientSide ? this.roll + Mth.wrapDegrees(target - this.roll) * 0.6F : target;
+            // (the orientation of a car driven by someone else comes from the synced orientation, see updateOrientation)
         }
 
         this.resetFallDistance();
@@ -163,6 +163,7 @@ public class FennecEntity extends VehicleEntity {
         this.physics.yaw = this.getYRot();
         this.physics.pitch = this.getXRot();
         this.physics.roll = this.roll;
+        this.physics.groundDistance = this.onGround() ? 0.0D : this.measureGroundDistance();
         this.physics.onGround = this.onGround();
         this.physics.inWater = this.isInWater();
         this.physics.groundSteerScale = ClientConfig.groundSteer();
@@ -196,8 +197,15 @@ public class FennecEntity extends VehicleEntity {
         } else {
             this.entityData.set(DATA_BOOST, this.physics.boost);
             this.entityData.set(DATA_BOOSTING, false);
-            this.entityData.set(DATA_ROLL, this.roll);
+            this.entityData.set(DATA_ORIENTATION, new Quaternionf(this.orientation));
         }
+    }
+
+    /** Height above the first solid block below the car, up to 4 blocks. */
+    private double measureGroundDistance() {
+        Vec3 from = this.position();
+        BlockHitResult hit = this.level().clip(new ClipContext(from, from.add(0.0D, -4.0D, 0.0D), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this));
+        return hit.getType() == HitResult.Type.MISS ? 4.0D : from.y - hit.getLocation().y;
     }
 
     private void sendControlToServer() {
@@ -205,24 +213,25 @@ public class FennecEntity extends VehicleEntity {
         boolean changed = this.physics.boosting != this.sentBoosting
                 || code != this.sentJumpCode
                 || Math.abs(this.physics.boost - this.sentBoost) >= 1.0F
-                || Math.abs(Mth.wrapDegrees(this.roll - this.sentRoll)) >= 1.0F;
+                || Math.abs(this.orientation.dot(this.sentOrientation)) < 0.99996F;
         this.ticksSinceSend++;
         if (changed || this.ticksSinceSend >= 20) {
-            PacketDistributor.sendToServer(new CarControlPayload(this.physics.boost, this.physics.boosting, code, this.roll));
+            PacketDistributor.sendToServer(new CarControlPayload(this.physics.boost, this.physics.boosting, code, new Quaternionf(this.orientation)));
             this.sentBoost = this.physics.boost;
             this.sentBoosting = this.physics.boosting;
             this.sentJumpCode = code;
-            this.sentRoll = this.roll;
+            this.sentOrientation.set(this.orientation);
             this.ticksSinceSend = 0;
         }
     }
 
     /** Called on the server when the driver's client reports its meter and jumps. */
-    public void applyClientControl(float boost, boolean boosting, int jumpCode, float roll) {
-        if (!Float.isFinite(boost) || !Float.isFinite(roll)) {
+    public void applyClientControl(float boost, boolean boosting, int jumpCode, Quaternionf orientation) {
+        if (!Float.isFinite(boost) || !Float.isFinite(orientation.x) || !Float.isFinite(orientation.y)
+                || !Float.isFinite(orientation.z) || !Float.isFinite(orientation.w) || orientation.lengthSquared() < 1.0E-6F) {
             return;
         }
-        this.entityData.set(DATA_ROLL, Mth.wrapDegrees(roll));
+        this.entityData.set(DATA_ORIENTATION, new Quaternionf(orientation).normalize());
         this.entityData.set(DATA_BOOST, Mth.clamp(boost, 0.0F, CarPhysics.MAX_BOOST));
         this.entityData.set(DATA_BOOSTING, boosting);
         this.entityData.set(DATA_JUMP_CODE, jumpCode);
@@ -231,12 +240,13 @@ public class FennecEntity extends VehicleEntity {
     // ------------------------------------------------------------------ client input
 
     /** Called every client tick by the input handler of the local driver. */
-    public void setClientInput(float throttle, float steer, float pitch, float roll, boolean airRollFree, boolean jumpPressed, boolean boost) {
+    public void setClientInput(float throttle, float steer, float pitch, float roll, boolean airRollFree, boolean jumpPressed, boolean jumpHeld, boolean boost) {
         this.clientInput.throttle = throttle;
         this.clientInput.steer = steer;
         this.clientInput.pitch = pitch;
         this.clientInput.roll = roll;
         this.clientInput.airRollFree = airRollFree;
+        this.clientInput.jumpHeld = jumpHeld;
         this.clientInput.boost = boost;
         if (jumpPressed) {
             this.clientInput.jump = true;
@@ -272,13 +282,12 @@ public class FennecEntity extends VehicleEntity {
     }
 
     private void spawnBoostFlames() {
-        double[] f = new double[3];
-        double[] u = new double[3];
-        double[] r = new double[3];
-        CarPhysics.basis(this.getYRot(), this.getXRot(), this.getRoll(1.0F), f, u, r);
-        Vec3 forward = new Vec3(f[0], f[1], f[2]);
-        Vec3 right = new Vec3(r[0], r[1], r[2]);
-        Vec3 up = new Vec3(u[0], u[1], u[2]);
+        Vector3f nose = this.orientation.transform(new Vector3f(1.0F, 0.0F, 0.0F));
+        Vector3f roof = this.orientation.transform(new Vector3f(0.0F, 1.0F, 0.0F));
+        Vector3f flank = this.orientation.transform(new Vector3f(0.0F, 0.0F, 1.0F));
+        Vec3 forward = new Vec3(nose.x, nose.y, nose.z);
+        Vec3 right = new Vec3(flank.x, flank.y, flank.z);
+        Vec3 up = new Vec3(roof.x, roof.y, roof.z);
         Vec3 velocity = this.getControllingPassenger() instanceof Player ? this.getDeltaMovement() : Vec3.ZERO;
         // the car pitches / rolls around its centre of mass, 0.45 blocks above the ground
         Vec3 centre = this.position().add(0.0D, 0.45D, 0.0D);
@@ -364,11 +373,6 @@ public class FennecEntity extends VehicleEntity {
         return Mth.lerp(partialTick, this.steerAngleO, this.steerAngle);
     }
 
-    /** Roll in degrees, right side down = positive. */
-    public float getRoll(float partialTick) {
-        return Mth.rotLerp(partialTick, this.rollO, this.roll);
-    }
-
     /** The orientation of the body (model space to world), interpolated between the last two ticks. Never touches the old value. */
     public Quaternionf getOrientation(float partialTick) {
         return this.orientationO.slerp(this.orientation, partialTick, new Quaternionf());
@@ -376,14 +380,20 @@ public class FennecEntity extends VehicleEntity {
 
     private void updateOrientation() {
         this.orientationO.set(this.orientation);
-        double[] f = new double[3];
-        double[] u = new double[3];
-        double[] r = new double[3];
-        CarPhysics.basis(this.getYRot(), this.getXRot(), this.roll, f, u, r);
-        // the model's +X is the nose, +Y the roof, +Z the right side
-        Matrix3f m = new Matrix3f((float) f[0], (float) f[1], (float) f[2], (float) u[0], (float) u[1], (float) u[2],
-                (float) r[0], (float) r[1], (float) r[2]);
-        this.orientation.setFromNormalized(m);
+        if (this.isControlledByLocalInstance()) {
+            // our own car (or an empty one on the server): from the physics
+            double[] f = new double[3];
+            double[] u = new double[3];
+            double[] r = new double[3];
+            CarPhysics.basis(this.getYRot(), this.getXRot(), this.roll, f, u, r);
+            // the model's +X is the nose, +Y the roof, +Z the right side
+            Matrix3f m = new Matrix3f((float) f[0], (float) f[1], (float) f[2], (float) u[0], (float) u[1], (float) u[2],
+                    (float) r[0], (float) r[1], (float) r[2]);
+            this.orientation.setFromNormalized(m);
+        } else {
+            // somebody else's car: the orientation the driver sent, smoothed a little
+            this.orientation.slerp(this.entityData.get(DATA_ORIENTATION), 0.7F);
+        }
         if (!this.orientationInitialised) {
             this.orientationO.set(this.orientation);
             this.orientationInitialised = true;

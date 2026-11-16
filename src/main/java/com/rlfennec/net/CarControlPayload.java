@@ -5,6 +5,7 @@ import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import org.joml.Quaternionf;
 
 /**
  * Sent every few ticks by the driving client. Like boats and horses, the car is simulated by the
@@ -14,16 +15,16 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
  * @param boost    boost left, 0..100
  * @param boosting whether the boost is firing right now
  * @param jumpCode {@code (counter << 6) | (event << 3) | flip}, changes on every jump
- * @param roll     air roll in degrees (yaw and pitch already travel with the vanilla vehicle movement packet)
+ * @param orientation the full orientation of the body (flips, loops, rolls), yaw and pitch also travel with the vehicle packet
  */
-public record CarControlPayload(float boost, boolean boosting, int jumpCode, float roll) implements CustomPacketPayload {
+public record CarControlPayload(float boost, boolean boosting, int jumpCode, Quaternionf orientation) implements CustomPacketPayload {
     public static final Type<CarControlPayload> TYPE = new Type<>(RLFennec.id("car_control"));
 
     public static final StreamCodec<RegistryFriendlyByteBuf, CarControlPayload> STREAM_CODEC = StreamCodec.composite(
             ByteBufCodecs.FLOAT, CarControlPayload::boost,
             ByteBufCodecs.BOOL, CarControlPayload::boosting,
             ByteBufCodecs.VAR_INT, CarControlPayload::jumpCode,
-            ByteBufCodecs.FLOAT, CarControlPayload::roll,
+            ByteBufCodecs.QUATERNIONF, CarControlPayload::orientation,
             CarControlPayload::new);
 
     @Override
