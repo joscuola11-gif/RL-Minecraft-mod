@@ -7,5 +7,8 @@
   "subtitles.rlfennec.boost": "La Fennec usa il boost",
   "subtitles.rlfennec.boost_start": "La Fennec accende il boost",
   "subtitles.rlfennec.jump": "La Fennec salta",
-  "subtitles.rlfennec.flip": "La Fennec fa un flip"
+  "subtitles.rlfennec.flip": "La Fennec fa un flip",
+  "key.rlfennec.roll_left": "Air roll a sinistra",
+  "key.rlfennec.roll_right": "Air roll a destra",
+  "key.rlfennec.air_roll": "Air roll libero (A / D rollano)"
 }

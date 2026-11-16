@@ -197,22 +197,25 @@ class CarPhysicsTest {
         assertTrue(Math.abs(s.car.vx) < 0.01D, "vx " + s.car.vx);
     }
 
+    private static Sim airborne() {
+        Sim s = new Sim();
+        s.y = 500.0D; // stay in the air for the whole test
+        s.car.onGround = false;
+        return s;
+    }
+
     @Test
     void airBoostFollowsThePitchOfTheNose() {
-        Sim boosted = new Sim();
-        Sim coasting = new Sim();
+        Sim boosted = airborne();
+        Sim coasting = airborne();
+        boosted.in.boost = true;
         for (Sim s : new Sim[] {boosted, coasting}) {
-            s.y = 500.0D;
-            s.car.onGround = false;
-            s.in.boost = s == boosted;
+            s.car.pitch = -50.0F; // nose up
         }
-        boosted.in.pitchTarget = -50.0F; // aiming up
-        coasting.in.pitchTarget = -50.0F;
         for (int i = 0; i < 30; i++) {
             boosted.tick();
             coasting.tick();
         }
-        assertEquals(-50.0F, boosted.car.pitch, 0.01F);
         assertTrue(boosted.car.vy > coasting.car.vy + 1.0D, "boosted vy " + boosted.car.vy + " vs " + coasting.car.vy);
         assertTrue(boosted.car.horizontalSpeed() > 0.3D);
         double speed = Math.sqrt(boosted.car.vx * boosted.car.vx + boosted.car.vy * boosted.car.vy + boosted.car.vz * boosted.car.vz);
@@ -221,37 +224,151 @@ class CarPhysicsTest {
 
     @Test
     void boostAtFortyFiveDegreesNoseUpKeepsTheCarFromFalling() {
-        Sim s = new Sim();
-        s.y = 500.0D;
-        s.car.onGround = false;
+        Sim s = airborne();
         s.car.vz = 1.0D; // already flying forward
-        s.in.boost = true;
-        s.in.pitchTarget = -45.0F;
         s.car.pitch = -45.0F;
+        s.in.boost = true;
         s.run(40);
         assertTrue(s.car.vy > -0.02D, "vy " + s.car.vy);
     }
 
     @Test
-    void theNoseFollowsTheAimAtALimitedRateAndLevelsOutOnTheGround() {
-        Sim s = new Sim();
-        s.y = 500.0D;
-        s.car.onGround = false;
-        s.in.pitchTarget = 60.0F;
-        s.tick();
-        assertEquals(CarPhysics.AIR_PITCH_RATE, s.car.pitch, 1e-4F);
-        s.run(30);
-        assertEquals(60.0F, s.car.pitch, 1e-4F);
-        // W / S do nothing in the air
-        s.in.pitchTarget = 0.0F;
-        s.in.throttle = 1.0F;
-        s.run(30);
-        assertEquals(0.0F, s.car.pitch, 1e-4F);
-
-        // back on the road the car stands level again
-        s.car.pitch = 40.0F;
-        s.car.onGround = true;
+    void pitchKeysTipTheNoseDownAndUpAndStopWhenReleased() {
+        Sim s = airborne();
+        s.in.pitch = 1.0F; // W: nose down
         s.run(10);
+        assertTrue(s.car.pitch > 30.0F, "pitch " + s.car.pitch);
+        s.in.pitch = -1.0F; // S: nose up
+        s.run(30);
+        assertTrue(s.car.pitch < -30.0F, "pitch " + s.car.pitch);
+        s.in.pitch = 0.0F;
+        s.run(12);
+        float rest = s.car.pitch;
+        s.run(10);
+        assertEquals(rest, s.car.pitch, 0.1F, "the nose must stop turning");
+    }
+
+    @Test
+    void wAndSDoNotAcceleratetheCarInTheAir() {
+        Sim s = airborne();
+        s.in.throttle = 1.0F;
+        s.run(10);
+        assertEquals(0.0D, s.car.horizontalSpeed(), 1e-9D);
+    }
+
+    @Test
+    void rollRightAndLeft() {
+        Sim s = airborne();
+        s.in.roll = 1.0F; // E
+        s.run(5);
+        assertTrue(s.car.roll > 20.0F && s.car.roll < 120.0F, "roll " + s.car.roll);
+        assertEquals(0.0F, s.car.yaw, 1e-3F);
+        assertEquals(0.0F, s.car.pitch, 1e-3F);
+        s.in.roll = -1.0F; // Q
+        s.run(12);
+        assertTrue(s.car.roll < -40.0F && s.car.roll > -170.0F, "roll " + s.car.roll);
+    }
+
+    @Test
+    void fullRollGoesAllTheWayAround() {
+        Sim s = airborne();
+        s.in.roll = 1.0F;
+        float travelled = 0.0F;
+        float last = s.car.roll;
+        for (int i = 0; i < 40; i++) {
+            s.tick();
+            travelled += CarPhysicsTest.wrap(s.car.roll - last);
+            last = s.car.roll;
+        }
+        assertTrue(travelled > 360.0F, "rolled " + travelled);
+    }
+
+    static float wrap(float deg) {
+        deg %= 360.0F;
+        return deg > 180.0F ? deg - 360.0F : deg < -180.0F ? deg + 360.0F : deg;
+    }
+
+    @Test
+    void freeAirRollTurnsTheSteeringIntoRoll() {
+        Sim s = airborne();
+        s.in.airRollFree = true;
+        s.in.steer = 1.0F; // D while the air roll button is held
+        s.run(10);
+        assertTrue(s.car.roll > 40.0F, "roll " + s.car.roll);
+        assertEquals(0.0F, s.car.yaw, 1e-3F);
+
+        Sim yaw = airborne();
+        yaw.in.steer = 1.0F;
+        yaw.run(10);
+        assertTrue(yaw.car.yaw > 20.0F, "yaw " + yaw.car.yaw);
+        assertEquals(0.0F, yaw.car.roll, 1e-3F);
+    }
+
+    @Test
+    void yawIsAboutTheCarsOwnUpAxisSoARolledCarDivesWhenYawing() {
+        // after a 90 degree roll to the right the roof points to the right: yawing right tips the nose DOWN
+        Sim s = airborne();
+        s.car.roll = 90.0F;
+        s.in.steer = 1.0F;
+        s.run(10);
+        assertTrue(s.car.pitch > 20.0F, "pitch " + s.car.pitch);
+        assertEquals(0.0F, s.car.yaw, 1.0F);
+    }
+
+    @Test
+    void pitchIsAboutTheCarsOwnRightAxisSoARolledCarSwingsSideways() {
+        // on its side (roof to the right) pitching "down" swings the nose to the side instead of down
+        Sim s = airborne();
+        s.car.roll = 90.0F;
+        s.in.pitch = 1.0F;
+        s.run(10);
+        assertTrue(Math.abs(s.car.yaw) > 20.0F, "yaw " + s.car.yaw);
+        assertEquals(0.0F, s.car.pitch, 1.0F);
+    }
+
+    @Test
+    void eulerAnglesRoundTripThroughTheBasis() {
+        java.util.Random rnd = new java.util.Random(42);
+        for (int i = 0; i < 500; i++) {
+            double yaw = rnd.nextDouble() * 360.0D - 180.0D;
+            double pitch = rnd.nextDouble() * 170.0D - 85.0D;
+            double roll = rnd.nextDouble() * 360.0D - 180.0D;
+            double[] f = new double[3];
+            double[] u = new double[3];
+            double[] r = new double[3];
+            CarPhysics.basis(yaw, pitch, roll, f, u, r);
+            double[] e = CarPhysics.euler(f, u, 0.0D);
+            assertEquals(yaw, e[0], 1e-6D);
+            assertEquals(pitch, e[1], 1e-6D);
+            assertEquals(roll, e[2], 1e-6D);
+        }
+    }
+
+    @Test
+    void basisAxesMatchTheDocumentedConventions() {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        // yaw 0 faces +Z, its right side is -X (west)
+        CarPhysics.basis(0.0D, 0.0D, 0.0D, f, u, r);
+        assertEquals(1.0D, f[2], 1e-9D);
+        assertEquals(1.0D, u[1], 1e-9D);
+        assertEquals(-1.0D, r[0], 1e-9D);
+        // positive pitch = nose down
+        CarPhysics.basis(0.0D, 30.0D, 0.0D, f, u, r);
+        assertTrue(f[1] < 0.0D);
+        // positive roll = right side down
+        CarPhysics.basis(0.0D, 0.0D, 30.0D, f, u, r);
+        assertTrue(r[1] < 0.0D);
+    }
+
+    @Test
+    void landingLevelsTheCarOutAgain() {
+        Sim s = new Sim();
+        s.car.pitch = 40.0F;
+        s.car.roll = 120.0F;
+        s.run(12);
         assertEquals(0.0F, s.car.pitch, 0.5F);
+        assertEquals(0.0F, s.car.roll, 0.5F);
     }
 }

@@ -14,14 +14,16 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
  * @param boost    boost left, 0..100
  * @param boosting whether the boost is firing right now
  * @param jumpCode {@code (counter << 6) | (event << 3) | flip}, changes on every jump
+ * @param roll     air roll in degrees (yaw and pitch already travel with the vanilla vehicle movement packet)
  */
-public record CarControlPayload(float boost, boolean boosting, int jumpCode) implements CustomPacketPayload {
+public record CarControlPayload(float boost, boolean boosting, int jumpCode, float roll) implements CustomPacketPayload {
     public static final Type<CarControlPayload> TYPE = new Type<>(RLFennec.id("car_control"));
 
     public static final StreamCodec<RegistryFriendlyByteBuf, CarControlPayload> STREAM_CODEC = StreamCodec.composite(
             ByteBufCodecs.FLOAT, CarControlPayload::boost,
             ByteBufCodecs.BOOL, CarControlPayload::boosting,
             ByteBufCodecs.VAR_INT, CarControlPayload::jumpCode,
+            ByteBufCodecs.FLOAT, CarControlPayload::roll,
             CarControlPayload::new);
 
     @Override

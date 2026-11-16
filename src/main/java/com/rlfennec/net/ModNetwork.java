@@ -7,7 +7,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "1";
+    private static final String PROTOCOL_VERSION = "2";
 
     private ModNetwork() {
     }
@@ -15,12 +15,20 @@ public final class ModNetwork {
     public static void register(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar registrar = event.registrar(PROTOCOL_VERSION);
         registrar.playToServer(CarControlPayload.TYPE, CarControlPayload.STREAM_CODEC, ModNetwork::handleCarControl);
+        registrar.playToServer(DismountPayload.TYPE, DismountPayload.STREAM_CODEC, ModNetwork::handleDismount);
+    }
+
+    private static void handleDismount(DismountPayload payload, IPayloadContext context) {
+        Player player = context.player();
+        if (player.getVehicle() instanceof FennecEntity) {
+            player.stopRiding();
+        }
     }
 
     private static void handleCarControl(CarControlPayload payload, IPayloadContext context) {
         Player player = context.player();
         if (player.getVehicle() instanceof FennecEntity car && car.getControllingPassenger() == player) {
-            car.applyClientControl(payload.boost(), payload.boosting(), payload.jumpCode());
+            car.applyClientControl(payload.boost(), payload.boosting(), payload.jumpCode(), payload.roll());
         }
     }
 }

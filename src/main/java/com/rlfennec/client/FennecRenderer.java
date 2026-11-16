@@ -38,6 +38,8 @@ public class FennecRenderer extends EntityRenderer<FennecEntity> {
         float pivot = FennecModel.pivotHeight();
         poseStack.translate(0.0F, pivot, 0.0F);
         poseStack.mulPose(Axis.ZP.rotationDegrees(-pitch));
+        // roll about the nose: positive = right side down (the mesh's +Z is the right side)
+        poseStack.mulPose(Axis.XP.rotationDegrees(car.getRoll(partialTick)));
 
         float flip = car.getFlipProgress(partialTick);
         if (flip > 0.0F) {
