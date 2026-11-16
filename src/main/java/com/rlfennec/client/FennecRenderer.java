@@ -4,7 +4,6 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import com.rlfennec.RLFennec;
 import com.rlfennec.entity.FennecEntity;
-import com.rlfennec.physics.CarPhysics;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
@@ -28,30 +27,11 @@ public class FennecRenderer extends EntityRenderer<FennecEntity> {
     public void render(FennecEntity car, float entityYaw, float partialTick, PoseStack poseStack, MultiBufferSource bufferSource, int packedLight) {
         poseStack.pushPose();
 
-        float yaw = Mth.rotLerp(partialTick, car.yRotO, car.getYRot());
-        float pitch = Mth.lerp(partialTick, car.xRotO, car.getXRot());
-
-        // The mesh faces +X, an entity with yaw 0 faces +Z.
-        poseStack.mulPose(Axis.YP.rotationDegrees(-90.0F - yaw));
-
-        // pitch / flips rotate around the centre of mass
+        // The whole orientation (yaw, pitch, roll, flips) is one rotation, interpolated as a quaternion so that
+        // flips and loops never jump. It turns around the centre of mass.
         float pivot = FennecModel.pivotHeight();
         poseStack.translate(0.0F, pivot, 0.0F);
-        poseStack.mulPose(Axis.ZP.rotationDegrees(-pitch));
-        // roll about the nose: positive = right side down (the mesh's +Z is the right side)
-        poseStack.mulPose(Axis.XP.rotationDegrees(car.getRoll(partialTick)));
-
-        float flip = car.getFlipProgress(partialTick);
-        if (flip > 0.0F) {
-            float angle = 360.0F * (flip * flip * (3.0F - 2.0F * flip)); // smoothstep
-            switch (car.getFlipType()) {
-                case CarPhysics.FLIP_FRONT -> poseStack.mulPose(Axis.ZP.rotationDegrees(-angle));
-                case CarPhysics.FLIP_BACK -> poseStack.mulPose(Axis.ZP.rotationDegrees(angle));
-                case CarPhysics.FLIP_LEFT -> poseStack.mulPose(Axis.XP.rotationDegrees(-angle));
-                case CarPhysics.FLIP_RIGHT -> poseStack.mulPose(Axis.XP.rotationDegrees(angle));
-                default -> { }
-            }
-        }
+        poseStack.mulPose(car.getOrientation(partialTick));
 
         float hurt = car.getHurtTime() - partialTick;
         float damage = Math.max(car.getDamage() - partialTick, 0.0F);

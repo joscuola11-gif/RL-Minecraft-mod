@@ -3,6 +3,7 @@ package com.rlfennec.entity;
 import com.rlfennec.client.RLFennecClient;
 import com.rlfennec.net.CarControlPayload;
 import com.rlfennec.physics.CarPhysics;
+import com.rlfennec.registry.ClientConfig;
 import com.rlfennec.registry.FennecConfig;
 import com.rlfennec.registry.ModItems;
 import com.rlfennec.registry.ModSounds;
@@ -35,6 +36,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.PacketDistributor;
+import org.joml.Matrix3f;
+import org.joml.Quaternionf;
 
 /**
  * The drivable Fennec.
@@ -50,7 +53,6 @@ public class FennecEntity extends VehicleEntity {
     /** Roll in degrees (right side down = positive). Yaw and pitch travel with the vanilla entity rotation. */
     private static final EntityDataAccessor<Float> DATA_ROLL = SynchedEntityData.defineId(FennecEntity.class, EntityDataSerializers.FLOAT);
 
-    public static final int FLIP_DURATION_TICKS = 14;
     /** Radius of the wheels in blocks (rear / front are nearly equal). */
     public static final float WHEEL_RADIUS = 0.32F;
 
@@ -85,8 +87,9 @@ public class FennecEntity extends VehicleEntity {
     private float wheelRollO;
     private float steerAngle;
     private float steerAngleO;
-    private int flipType = CarPhysics.FLIP_NONE;
-    private int flipTick;
+    private final Quaternionf orientation = new Quaternionf();
+    private final Quaternionf orientationO = new Quaternionf();
+    private boolean orientationInitialised;
     private boolean wasBoosting;
 
     public FennecEntity(EntityType<? extends FennecEntity> type, Level level) {
@@ -144,6 +147,7 @@ public class FennecEntity extends VehicleEntity {
         } else {
             this.clientVisualTick();
         }
+        this.updateOrientation();
         this.checkInsideBlocks();
     }
 
@@ -161,6 +165,10 @@ public class FennecEntity extends VehicleEntity {
         this.physics.roll = this.roll;
         this.physics.onGround = this.onGround();
         this.physics.inWater = this.isInWater();
+        this.physics.groundSteerScale = ClientConfig.groundSteer();
+        this.physics.airPitchScale = ClientConfig.airPitchSpeed();
+        this.physics.airYawScale = ClientConfig.airYawSpeed();
+        this.physics.airRollScale = ClientConfig.airRollSpeed();
         this.physics.regenPerTick = FennecConfig.regenPerTick();
         this.physics.regenDelayTicks = FennecConfig.regenDelayTicks();
 
@@ -251,13 +259,6 @@ public class FennecEntity extends VehicleEntity {
         this.steerAngleO = this.steerAngle;
         this.steerAngle += (target - this.steerAngle) * 0.4F;
 
-        if (this.flipTick > 0) {
-            this.flipTick--;
-            if (this.flipTick == 0) {
-                this.flipType = CarPhysics.FLIP_NONE;
-            }
-        }
-
         boolean boosting = this.isBoosting();
         if (boosting) {
             this.spawnBoostFlames();
@@ -302,13 +303,19 @@ public class FennecEntity extends VehicleEntity {
     }
 
     private void playJumpEffects(int event, int flip) {
+        if (event == CarPhysics.EVENT_WAVE_DASH) {
+            // wave dash: a burst of dust from the wheels
+            this.level().playLocalSound(this.getX(), this.getY(), this.getZ(), ModSounds.FLIP.get(), SoundSource.NEUTRAL, 0.8F, 0.75F, false);
+            for (int i = 0; i < 12; i++) {
+                this.level().addParticle(ParticleTypes.CLOUD, this.getX() + (this.random.nextDouble() - 0.5D) * 1.6D, this.getY() + 0.1D,
+                        this.getZ() + (this.random.nextDouble() - 0.5D) * 1.6D, (this.random.nextDouble() - 0.5D) * 0.1D, 0.04D,
+                        (this.random.nextDouble() - 0.5D) * 0.1D);
+            }
+            return;
+        }
         SoundEvent sound = flip != CarPhysics.FLIP_NONE ? ModSounds.FLIP.get() : ModSounds.JUMP.get();
         this.level().playLocalSound(this.getX(), this.getY(), this.getZ(), sound, SoundSource.NEUTRAL, 1.0F,
                 event == CarPhysics.EVENT_DOUBLE_JUMP ? 1.15F : 1.0F, false);
-        if (flip != CarPhysics.FLIP_NONE) {
-            this.flipType = flip;
-            this.flipTick = FLIP_DURATION_TICKS;
-        }
     }
 
     @Override
@@ -362,16 +369,25 @@ public class FennecEntity extends VehicleEntity {
         return Mth.rotLerp(partialTick, this.rollO, this.roll);
     }
 
-    public int getFlipType() {
-        return this.flipType;
+    /** The orientation of the body (model space to world), interpolated between the last two ticks. Never touches the old value. */
+    public Quaternionf getOrientation(float partialTick) {
+        return this.orientationO.slerp(this.orientation, partialTick, new Quaternionf());
     }
 
-    /** 0..1 progress of the flip animation, 0 when not flipping. */
-    public float getFlipProgress(float partialTick) {
-        if (this.flipTick <= 0) {
-            return 0.0F;
+    private void updateOrientation() {
+        this.orientationO.set(this.orientation);
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        CarPhysics.basis(this.getYRot(), this.getXRot(), this.roll, f, u, r);
+        // the model's +X is the nose, +Y the roof, +Z the right side
+        Matrix3f m = new Matrix3f((float) f[0], (float) f[1], (float) f[2], (float) u[0], (float) u[1], (float) u[2],
+                (float) r[0], (float) r[1], (float) r[2]);
+        this.orientation.setFromNormalized(m);
+        if (!this.orientationInitialised) {
+            this.orientationO.set(this.orientation);
+            this.orientationInitialised = true;
         }
-        return Mth.clamp(1.0F - (this.flipTick - partialTick) / FLIP_DURATION_TICKS, 0.0F, 1.0F);
     }
 
     // ------------------------------------------------------------------ interpolation of other players' cars

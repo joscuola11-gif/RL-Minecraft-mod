@@ -162,7 +162,7 @@ def write_ogg(name, samples, loop=False):
 
 
 if __name__ == "__main__":
-    write_ogg("engine_loop", engine_loop(), loop=True)
+    # the engine sounds come from a real recording, see prepare_engine_sound.py
     write_ogg("boost_loop", boost_loop(), loop=True)
     write_ogg("boost_start", boost_start())
     write_ogg("jump", jump())

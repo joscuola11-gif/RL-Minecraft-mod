@@ -131,7 +131,7 @@ class CarPhysicsTest {
         s.in.jump = true;
         s.tick();
         s.run(5);
-        s.in.throttle = 1.0F;
+        s.in.pitch = 1.0F; // stick forward
         s.in.jump = true;
         double before = s.car.forwardSpeed();
         s.tick();
@@ -283,6 +283,20 @@ class CarPhysicsTest {
         assertTrue(travelled > 360.0F, "rolled " + travelled);
     }
 
+    /** y component of the roof direction: 1 = upright, -1 = upside down. */
+    static double roofUp(CarPhysics c) {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        CarPhysics.basis(c.yaw, c.pitch, c.roll, f, u, r);
+        return u[1];
+    }
+
+    /** y component of the nose direction: 1 = straight up. */
+    static double noseUp(CarPhysics c) {
+        return CarPhysics.forward(c.yaw, c.pitch)[1];
+    }
+
     static float wrap(float deg) {
         deg %= 360.0F;
         return deg > 180.0F ? deg - 360.0F : deg < -180.0F ? deg + 360.0F : deg;
@@ -370,5 +384,292 @@ class CarPhysicsTest {
         s.run(12);
         assertEquals(0.0F, s.car.pitch, 0.5F);
         assertEquals(0.0F, s.car.roll, 0.5F);
+    }
+
+    // ------------------------------------------------------------------ dodge / flip cancel / wave dash
+
+    private static Sim midAir() {
+        Sim s = airborne();
+        s.car.jumpsUsed = 1; // the first jump is gone, the second one is the dodge
+        s.run(3);
+        return s;
+    }
+
+    private static void dodge(Sim s, float pitch, float steer) {
+        s.in.pitch = pitch;
+        s.in.steer = steer;
+        s.in.jump = true;
+        s.tick();
+        s.in.pitch = 0.0F;
+        s.in.steer = 0.0F;
+    }
+
+    @Test
+    void withoutADirectionTheSecondJumpIsAPlainDoubleJump() {
+        Sim s = midAir();
+        double speed = s.car.horizontalSpeed();
+        dodge(s, 0.0F, 0.0F);
+        assertEquals(CarPhysics.EVENT_DOUBLE_JUMP, s.car.event);
+        assertEquals(CarPhysics.FLIP_NONE, s.car.flip);
+        assertEquals(CarPhysics.DOUBLE_JUMP_VELOCITY, s.car.vy, 1e-9D);
+        assertEquals(speed, s.car.horizontalSpeed(), 1e-9D);
+        s.run(20);
+        assertEquals(0.0F, s.car.pitch, 1e-3F);
+        assertEquals(0.0F, s.car.roll, 1e-3F);
+    }
+
+    @Test
+    void aSmallPushOfTheStickIsNotADodge() {
+        Sim s = midAir();
+        dodge(s, 0.3F, 0.2F);
+        assertEquals(CarPhysics.FLIP_NONE, s.car.flip);
+    }
+
+    @Test
+    void theFlipGoesTheWayTheStickPoints() {
+        float[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        int[] expected = {CarPhysics.FLIP_FRONT, CarPhysics.FLIP_BACK, CarPhysics.FLIP_RIGHT, CarPhysics.FLIP_LEFT};
+        for (int i = 0; i < dirs.length; i++) {
+            Sim s = midAir();
+            dodge(s, dirs[i][0], dirs[i][1]);
+            assertEquals(expected[i], s.car.flip, "direction " + i);
+        }
+    }
+
+    @Test
+    void aForwardFlipTurnsTheNoseDownAndAllTheWayAroundAndEndsUpright() {
+        Sim s = midAir();
+        dodge(s, 1.0F, 0.0F);
+        double lowestNose = 1.0D;
+        double lowestRoof = 1.0D;
+        for (int i = 0; i < CarPhysics.DODGE_TICKS + 2; i++) {
+            s.tick();
+            lowestNose = Math.min(lowestNose, noseUp(s.car));
+            lowestRoof = Math.min(lowestRoof, roofUp(s.car));
+        }
+        assertTrue(lowestNose < -0.8D, "the nose went to y=" + lowestNose);
+        assertTrue(lowestRoof < -0.8D, "the car was upside down (roof y=" + lowestRoof + ")");
+        assertEquals(0.0F, s.car.pitch, 6.0F);
+        assertEquals(0.0F, Math.abs(wrap(s.car.roll)), 6.0F);
+    }
+
+    @Test
+    void aBackFlipTurnsTheNoseUp() {
+        Sim s = midAir();
+        dodge(s, -1.0F, 0.0F);
+        double highestNose = -1.0D;
+        for (int i = 0; i < CarPhysics.DODGE_TICKS + 2; i++) {
+            s.tick();
+            highestNose = Math.max(highestNose, noseUp(s.car));
+        }
+        assertTrue(highestNose > 0.8D, "the nose only went to y=" + highestNose);
+        assertEquals(0.0F, Math.abs(wrap(s.car.pitch)), 6.0F);
+    }
+
+    @Test
+    void aSideFlipRollsTheCarAndADiagonalOneReturnsUpright() {
+        Sim s = midAir();
+        dodge(s, 0.0F, 1.0F);
+        s.run(4);
+        assertTrue(s.car.roll > 60.0F, "roll " + s.car.roll);
+        s.run(CarPhysics.DODGE_TICKS);
+        assertEquals(0.0F, Math.abs(wrap(s.car.roll)), 6.0F);
+
+        Sim d = midAir();
+        dodge(d, 1.0F, 1.0F);
+        d.run(CarPhysics.DODGE_TICKS + 2);
+        assertEquals(0.0F, Math.abs(wrap(d.car.pitch)), 12.0F);
+        assertEquals(0.0F, Math.abs(wrap(d.car.roll)), 12.0F);
+    }
+
+    @Test
+    void theDodgeKeepsItsSpeedBoost() {
+        Sim s = midAir();
+        double before = s.car.forwardSpeed();
+        dodge(s, 1.0F, 0.0F);
+        assertTrue(s.car.forwardSpeed() > before + 0.3D);
+    }
+
+    @Test
+    void holdingTheOppositeDirectionCancelsTheFlipButKeepsTheSpeed() {
+        Sim cancelled = midAir();
+        Sim flipped = midAir();
+        dodge(cancelled, 1.0F, 0.0F);
+        dodge(flipped, 1.0F, 0.0F);
+        float maxTilt = 0.0F;
+        for (int i = 0; i < CarPhysics.DODGE_TICKS; i++) {
+            cancelled.in.pitch = -1.0F; // stick back
+            cancelled.tick();
+            flipped.tick();
+            maxTilt = Math.max(maxTilt, Math.abs(wrap(cancelled.car.pitch)));
+        }
+        cancelled.in.pitch = 0.0F;
+        cancelled.run(6);
+        flipped.run(6);
+        assertTrue(maxTilt < 10.0F, "the cancelled flip still tipped " + maxTilt);
+        assertEquals(0.0F, Math.abs(wrap(cancelled.car.pitch)), 3.0F);
+        assertEquals(flipped.car.vx, cancelled.car.vx, 1e-9D * 100);
+        assertEquals(flipped.car.vz, cancelled.car.vz, 1e-9D * 100);
+    }
+
+    @Test
+    void cancellingHalfwayTurnsTheCarBackToLevelAndItStaysThere() {
+        Sim s = midAir();
+        dodge(s, 1.0F, 0.0F);
+        s.run(3); // about a quarter of the flip
+        assertTrue(s.car.pitch > 50.0F);
+        s.in.pitch = -1.0F;
+        s.run(4);
+        assertEquals(0.0F, Math.abs(wrap(s.car.pitch)), 3.0F);
+        s.in.pitch = 0.0F; // let go: the flip must not start again
+        s.run(10);
+        assertEquals(0.0F, Math.abs(wrap(s.car.pitch)), 3.0F);
+    }
+
+    @Test
+    void pitchInputDoesNotAddToARunningFlip() {
+        Sim a = midAir();
+        Sim b = midAir();
+        dodge(a, 1.0F, 0.0F);
+        dodge(b, 1.0F, 0.0F);
+        for (int i = 0; i < CarPhysics.DODGE_TICKS - 1; i++) {
+            b.in.pitch = 1.0F; // pushing the same way adds nothing extra
+            a.tick();
+            b.tick();
+        }
+        assertEquals(a.car.pitch, b.car.pitch, 1e-3F);
+    }
+
+    /** A car at speed 1.0 falling towards the road; after {@code fallTicks} it dodges forward. Returns the sim after the first tick on the road. */
+    private static Sim fallAndDodge(int fallTicks, boolean dodge) {
+        Sim s = new Sim();
+        s.in.throttle = 1.0F;
+        s.run(40);
+        s.in.throttle = 0.0F;
+        s.y = 2.0D;
+        s.car.onGround = false;
+        s.car.vy = -0.2D;
+        s.car.jumpsUsed = 1;
+        s.run(fallTicks);
+        if (dodge) {
+            dodge(s, 1.0F, 0.0F);
+        }
+        int guard = 0;
+        while (!s.car.onGround && guard++ < 80) {
+            s.tick();
+        }
+        s.tick(); // the first tick on the road carries the dash
+        return s;
+    }
+
+    @Test
+    void waveDashLandingJustAfterADodgeGivesSpeed() {
+        double without = fallAndDodge(3, false).car.forwardSpeed();
+        int successes = 0;
+        for (int fall = 0; fall <= 8; fall++) {
+            Sim s = fallAndDodge(fall, true);
+            if (s.car.forwardSpeed() > without + 0.2D) {
+                successes++;
+            }
+        }
+        assertTrue(successes >= 1, "no dodge timing produced a wave dash");
+        assertTrue(successes < 9, "every timing gave a wave dash, the window should be limited");
+    }
+
+    @Test
+    void aDodgeFarAboveTheRoadDoesNotWaveDash() {
+        Sim s = new Sim();
+        s.in.throttle = 1.0F;
+        s.run(40);
+        s.in.throttle = 0.0F;
+        s.y = 30.0D;
+        s.car.onGround = false;
+        s.car.vy = 0.0D;
+        s.car.jumpsUsed = 1;
+        double before = s.car.forwardSpeed();
+        dodge(s, 1.0F, 0.0F);
+        int guard = 0;
+        while (!s.car.onGround && guard++ < 200) {
+            s.tick();
+        }
+        s.tick();
+        assertTrue(s.car.forwardSpeed() <= Math.max(before + 0.0D, CarPhysics.MAX_SPEED) + 0.45D);
+        assertEquals(CarPhysics.EVENT_NONE, s.car.event);
+    }
+
+    @Test
+    void waveDashOnlyHappensOnceAndNeedsALateLandingAfterTheDodge() {
+        Sim s = midAir();
+        dodge(s, 1.0F, 0.0F);
+        s.run(CarPhysics.WAVE_DASH_WINDOW + 3); // still in the air long after
+        s.car.onGround = true;
+        double before = s.car.forwardSpeed();
+        s.tick();
+        assertEquals(CarPhysics.EVENT_NONE, s.car.event);
+        assertTrue(s.car.forwardSpeed() <= Math.max(before, CarPhysics.MAX_SPEED) + 1e-6D);
+    }
+
+    @Test
+    void steeringAndAirTurnSpeedCanBeScaled() {
+        Sim normal = new Sim();
+        Sim fast = new Sim();
+        fast.car.groundSteerScale = 2.0F;
+        for (Sim s : new Sim[] {normal, fast}) {
+            s.in.throttle = 1.0F;
+            s.run(30);
+            s.in.steer = 1.0F;
+            s.run(10);
+        }
+        assertTrue(fast.car.yaw > normal.car.yaw * 1.5F, normal.car.yaw + " vs " + fast.car.yaw);
+
+        Sim a = airborne();
+        Sim b = airborne();
+        b.car.airYawScale = 0.5F;
+        b.car.airPitchScale = 0.5F;
+        b.car.airRollScale = 0.5F;
+        for (Sim s : new Sim[] {a, b}) {
+            s.in.pitch = 1.0F;
+            s.in.roll = 1.0F;
+            s.in.steer = 1.0F;
+            s.run(5);
+        }
+        // the half-speed car has not turned as far
+        assertTrue(b.car.pitch < a.car.pitch);
+        assertTrue(b.car.roll < a.car.roll);
+    }
+
+    @Test
+    void landingOnTheRoofStandsTheCarUpAndKeepsItsDirectionOfTravel() {
+        // upside down and facing the wrong way (yaw 180) while the car travels towards +z
+        Sim s = new Sim();
+        s.car.vz = 1.0D;
+        s.car.yaw = 180.0F;
+        s.car.roll = 180.0F;
+        s.car.onGround = false;
+        s.y = 0.2D;
+        s.car.vy = -0.3D;
+        s.car.jumpsUsed = 1;
+        int guard = 0;
+        while (!s.car.onGround && guard++ < 20) {
+            s.tick();
+        }
+        s.tick();
+        assertEquals(0.0F, s.car.yaw, 1.0F, "the car must not turn around");
+        assertEquals(0.0F, s.car.roll, 1.0F);
+        assertEquals(0.0F, s.car.pitch, 1.0F);
+        assertTrue(s.car.forwardSpeed() > 0.8D, "speed " + s.car.forwardSpeed());
+    }
+
+    @Test
+    void wavedashLandingNoseDownOnTheWheelsStillWorks() {
+        // 4 ticks into a forward flip (about 81 degrees) the car touches the road
+        double without = fallAndDodge(3, false).car.forwardSpeed();
+        boolean any = false;
+        for (int fall = 0; fall <= 10; fall++) {
+            if (fallAndDodge(fall, true).car.forwardSpeed() > without + 0.2D) {
+                any = true;
+            }
+        }
+        assertTrue(any);
     }
 }

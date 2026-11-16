@@ -9,8 +9,12 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 public final class ModSounds {
     public static final DeferredRegister<SoundEvent> SOUNDS = DeferredRegister.create(Registries.SOUND_EVENT, RLFennec.MOD_ID);
 
-    /** Looping engine hum, pitch follows the speed of the car. */
+    /** Looping engine, pitch and volume follow the speed of the car. */
     public static final DeferredHolder<SoundEvent, SoundEvent> ENGINE = register("fennec.engine");
+    /** The engine firing up when somebody gets in. */
+    public static final DeferredHolder<SoundEvent, SoundEvent> ENGINE_START = register("fennec.engine_start");
+    /** The engine winding down when the driver gets out. */
+    public static final DeferredHolder<SoundEvent, SoundEvent> ENGINE_STOP = register("fennec.engine_stop");
     /** Looping boost roar while the boost button is held. */
     public static final DeferredHolder<SoundEvent, SoundEvent> BOOST = register("fennec.boost");
     /** One-shot ignition thump when the boost starts. */

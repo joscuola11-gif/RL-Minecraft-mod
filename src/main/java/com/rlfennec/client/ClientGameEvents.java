@@ -4,6 +4,8 @@ import com.rlfennec.RLFennec;
 import com.rlfennec.entity.FennecEntity;
 import com.rlfennec.input.GamepadMapper;
 import com.rlfennec.net.DismountPayload;
+import com.rlfennec.input.PadAction;
+import com.rlfennec.registry.ClientConfig;
 import com.rlfennec.registry.FennecConfig;
 import java.util.List;
 import net.minecraft.client.CameraType;
@@ -143,9 +145,14 @@ public final class ClientGameEvents {
     /** While driving, sneaking must not dismount: getting out is the "Exit" key (or the controller). */
     @SubscribeEvent
     public static void onMovementInput(MovementInputUpdateEvent event) {
-        if (event.getEntity().getVehicle() instanceof FennecEntity) {
+        // (if both the keyboard and the controller "get out" commands are empty, sneaking still gets you out: no trap)
+        if (event.getEntity().getVehicle() instanceof FennecEntity && hasExitBinding()) {
             event.getInput().shiftKeyDown = false;
         }
+    }
+
+    private static boolean hasExitBinding() {
+        return !FennecKeys.EXIT.isUnbound() || !ClientConfig.bindings().get(PadAction.ENTER_EXIT).isNone();
     }
 
     /** A shortcut to the controller bindings at the top left of Options > Controls > Key Binds. */
@@ -153,7 +160,7 @@ public final class ClientGameEvents {
     public static void onScreenInit(ScreenEvent.Init.Post event) {
         if (event.getScreen() instanceof KeyBindsScreen screen) {
             event.addListener(Button.builder(Component.translatable("gui.rlfennec.pad.open"),
-                    button -> Minecraft.getInstance().setScreen(new PadBindingsScreen(screen))).bounds(8, 6, 150, 20).build());
+                    button -> Minecraft.getInstance().setScreen(new PadBindingsScreen(screen))).bounds(8, 6, 160, 20).build());
         }
     }
 

@@ -18,7 +18,7 @@ si muove, **salta** (e fa il flip), ha **100 di boost** e in basso a destra c'è
 | `A` / `D` | a terra: sterza. In aria: **imbardata** (gira il muso a sinistra / destra) |
 | `Q` / `E` | **air roll** a sinistra / destra (in aria) |
 | `Alt sinistro` (tenuto) | **air roll libero**: finché lo tieni premuto `A` / `D` fanno rollare l'auto invece di girarla, come il pulsante "Air Roll" di Rocket League |
-| `Spazio` | **salto**. Premilo ancora in aria (entro 1,5 s) per il **doppio salto**; con `W` `S` `A` `D` premuto fai un **flip** in quella direzione, con una spinta in più |
+| `Spazio` | **salto**. Premilo ancora in aria (entro 1,5 s): senza direzione è un **doppio salto**, con una direzione premuta (`W` `S` `A` `D`, anche in diagonale) è un **flip** in quella direzione (vedi sotto) |
 | `Ctrl sinistro` | **boost** |
 | Mouse su/giù | solo la visuale. **Non punta più l'auto**: il muso si controlla con `W`/`S` |
 | `Shift` | scendi (vedi sotto) |
@@ -26,10 +26,21 @@ si muove, **salta** (e fa il flip), ha **100 di boost** e in basso a destra c'è
 ### Cambiare i comandi
 
 **Tastiera e mouse**: ogni azione ha il suo tasto in *Opzioni → Comandi → Tasti → Rocket League Fennec*: accelera, frena, sterza a sinistra/destra, muso giù/su, salto, boost, air roll sinistra/destra, air roll libero, scendi. Si può usare anche un tasto del mouse (sconsigliato `clic sinistro/destro`: Minecraft li usa comunque per colpire e piazzare).
-* Accelera, frena, sterza, muso giù/su, salto e scendi sono **vuoti** ("Non assegnato") di proposito: vuoto vuol dire "usa il tasto di Minecraft" (Avanti, Indietro, Sinistra, Destra, Salto, Furtività), quindi se hai già cambiato quelli in vanilla vanno bene così. Assegna un tasto per dare all'auto un comando tutto suo, per esempio le frecce per il muso e `WASD` per il resto.
-* Mentre guidi **Furtività non fa più scendere**: si scende con il tasto "Scendi" (se è vuoto, con Furtività).
-* `Q`, `E`, `Ctrl` e `Alt` sono assegnati di default e Minecraft li segnala in rosso perché `Q`, `E` e `Ctrl` sono anche "Butta oggetto", "Inventario" e "Corri": è voluto, mentre guidi quelle azioni di Minecraft sono disattivate (non butti l'oggetto in mano e non si apre l'inventario), vale per qualsiasi tasto che condividi con un'azione dell'auto.
+* **Qualunque comando si può lasciare vuoto** ("Non assegnato"): un comando vuoto non fa niente. Se li svuoti tutti puoi anche dare all'auto tasti tutti suoi, per esempio le frecce per il muso e `WASD` per il resto.
+* Mentre guidi **Furtività non fa più scendere**: si scende con il tasto "Scendi" (di default `Shift sinistro`) o con `Y` del controller. Se li lasci vuoti tutti e due, torna a valere Furtività, così non resti mai bloccato nell'auto.
+* Minecraft segnala in rosso i tasti che hanno in comune con altre azioni (`W` `A` `S` `D` `Spazio` `Shift` `Q` `E` `Ctrl` sono anche movimento, "Butta oggetto", "Inventario" e "Corri"): è voluto, mentre guidi quelle azioni di Minecraft sono disattivate (non butti l'oggetto in mano e non si apre l'inventario), vale per qualsiasi tasto che condividi con un'azione dell'auto.
 * In `config/rlfennec-common.toml` c'è `invertAirPitch` per invertire `W`/`S` in aria.
+
+### Velocità di sterzata
+
+Quattro regolatori (da 0,2 a 3,0, 1,0 è la velocità normale): sterzata a terra, beccheggio in aria, imbardata in aria e air roll. Si cambiano dal bottone **"Controller e impostazioni Fennec..."** in *Opzioni → Comandi → Tasti*, poi **"Sterzata e altre opzioni..."** (oppure *Mods → Rocket League Fennec → Config*), sezione `handling`. Sono nel file `config/rlfennec-client.toml` e valgono per te, non per gli altri giocatori.
+
+### Flip, flip cancel e wave dash
+
+* **Flip (dodge)**: salta, poi premi di nuovo salto **spingendo una direzione**: avanti, indietro, sinistra, destra o diagonale. L'auto fa un giro completo in quella direzione (0,75 s) e prende una spinta di velocità. Senza direzione è solo un doppio salto. Con l'air roll libero premuto non parte nessun flip.
+* **Flip cancel**: durante il flip tieni premuta la direzione **opposta** (per esempio dopo un flip in avanti, indietro): la rotazione si ferma e l'auto torna com'era, ma la spinta di velocità resta. Se la annulli a metà torna in piano e non riparte.
+* **Wave dash**: fai il flip poco prima di toccare terra (qualche decimo di secondo) e atterra con le ruote verso il basso: il flip viene annullato dal terreno e l'auto riparte con un impulso di velocità sopra il normale, senza usare boost. Se invece atterri sul tetto o sul muso l'auto si rimette in piedi e continua nella direzione in cui andava.
+* Il flip è una rotazione vera, non un'animazione: durante il giro il boost spinge dove punta il muso in quel momento.
 
 **Controller**: ogni azione si può mettere su qualunque tasto, levetta (in una direzione) o grilletto.
 1. Apri la schermata con il bottone **"Comandi controller Fennec..."** in alto a sinistra in *Opzioni → Comandi → Tasti* (oppure *Mods → Rocket League Fennec → Config*).
@@ -74,13 +85,17 @@ I test della fisica (`CarPhysics`, pura matematica senza Minecraft) girano con `
 
 I **suoni originali di Rocket League (motore della Fennec, boost) non sono inclusi**: sono audio di Psyonix/Epic Games, coperto da copyright, e non li ho scaricati né ricampionati. Non ho trovato nessuna fonte che li distribuisca con una licenza che permetta di metterli in una mod.
 
-Al loro posto ci sono suoni **sintetizzati da zero** (`tools/generate_sounds.py`): un motore a loop il cui tono sale con la velocità, un ruggito di boost in loop, l'accensione del boost, il salto e il flip.
+**Il motore** viene dalla registrazione che mi hai dato, tagliata in tre pezzi (`tools/prepare_engine_sound.py`): l'accensione quando sali, il loop del motore acceso mentre guidi, lo spegnimento quando scendi. Il loop è fermo al minimo quando l'auto sta ferma; sale di tono e di volume con la velocità, ha un colpo di volume quando dai gas, e quando molli scende lentamente come un motore vero.
+
+Il resto è **sintetizzato da zero** (`tools/generate_sounds.py`): il ruggito del boost in loop, l'accensione del boost, il salto e il flip.
 
 Se vuoi i suoni veri (per uso personale, dalla tua copia del gioco) basta **sostituire questi file** in `src/main/resources/assets/rlfennec/sounds/fennec/` e ricompilare:
 
 | File | Quando suona |
 |---|---|
+| `engine_start.ogg` | una volta quando qualcuno sale |
 | `engine_loop.ogg` | in loop mentre qualcuno guida; l'altezza va da 0,5× a 2× con la velocità |
+| `engine_stop.ogg` | una volta quando il pilota scende |
 | `boost_loop.ogg` | in loop finché tieni premuto il boost |
 | `boost_start.ogg` | una volta all'accensione del boost |
 | `jump.ogg`, `flip.ogg` | salto e flip |
