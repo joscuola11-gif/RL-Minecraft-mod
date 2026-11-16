@@ -39,5 +39,8 @@
   "key.rlfennec.leave": "Get out of the car",
   "subtitles.rlfennec.engine_start": "Fennec engine starts",
   "subtitles.rlfennec.engine_stop": "Fennec engine stops",
-  "hud.rlfennec.flip_over": "Press %s to flip over"
+  "hud.rlfennec.flip_over": "Press %s to flip over",
+  "commands.rlfennec.arena.missing": "The arena dimension is not loaded (it needs a world created or opened with the mod installed).",
+  "commands.rlfennec.arena.entered": "Welcome to Salty Shores (night). Press the leave key to get out, /rlfennec arena leave to go back.",
+  "subtitles.rlfennec.pad": "Fennec picks up boost"
 }

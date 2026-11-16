@@ -70,5 +70,15 @@
         "attenuation_distance": 32
       }
     ]
+  },
+  "fennec.pad": {
+    "category": "neutral",
+    "subtitle": "subtitles.rlfennec.pad",
+    "sounds": [
+      {
+        "name": "rlfennec:fennec/pad_pickup",
+        "attenuation_distance": 32
+      }
+    ]
   }
 }

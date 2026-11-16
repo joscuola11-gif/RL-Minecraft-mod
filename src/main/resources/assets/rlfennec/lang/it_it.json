@@ -39,5 +39,8 @@
   "key.rlfennec.leave": "Scendi dall'auto",
   "subtitles.rlfennec.engine_start": "Il motore della Fennec si accende",
   "subtitles.rlfennec.engine_stop": "Il motore della Fennec si spegne",
-  "hud.rlfennec.flip_over": "Premi %s per girarti"
+  "hud.rlfennec.flip_over": "Premi %s per girarti",
+  "commands.rlfennec.arena.missing": "La dimensione dell'arena non è caricata (serve un mondo creato o aperto con la mod installata).",
+  "commands.rlfennec.arena.entered": "Benvenuto a Salty Shores (notte). Premi il tasto per scendere, /rlfennec arena leave per tornare indietro.",
+  "subtitles.rlfennec.pad": "La Fennec prende il boost"
 }

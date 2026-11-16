@@ -142,6 +142,19 @@ def flip():
     return fade(normalise(x, 0.85), 0.004, 0.06)
 
 
+def pad_pickup():
+    """0.45 s boost pad pickup: a quick rising whoosh with a bright two-note chime on top."""
+    dur = 0.45
+    t = t_axis(dur)
+    env = np.minimum(t / 0.01, 1.0) * np.exp(-t * 6.5)
+    sweep = lowpass_sweep(RNG.uniform(-1, 1, len(t)), 400, 7000) * np.minimum(t / 0.02, 1.0) * np.exp(-t * 9.0) * 0.8
+    f1, f2 = 880.0, 1318.5
+    chime = (np.sin(2 * np.pi * f1 * t) * np.exp(-t * 9.0) + np.sin(2 * np.pi * f2 * np.maximum(t - 0.07, 0)) * (t > 0.07) * np.exp(-(t - 0.07) * 8.0)) * 0.55
+    thump = np.sin(2 * np.pi * (90.0 + 120.0 * t) * t) * np.exp(-t * 14.0) * 0.5
+    x = sweep + chime * env * 1.2 + thump
+    return fade(normalise(x, 0.85), 0.002, 0.05)
+
+
 def write_ogg(name, samples, loop=False):
     OUT.mkdir(parents=True, exist_ok=True)
     pcm = np.clip(samples * 32767, -32768, 32767).astype("<i2")
@@ -167,3 +180,4 @@ if __name__ == "__main__":
     write_ogg("boost_start", boost_start())
     write_ogg("jump", jump())
     write_ogg("flip", flip())
+    write_ogg("pad_pickup", pad_pickup())

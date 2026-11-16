@@ -58,6 +58,16 @@ public final class FennecModel {
     private static final float[] HEADLIGHT = {1.00F, 0.92F, 0.94F};
     private static final float[] WHITE = {1.0F, 1.0F, 1.0F};
 
+    /** In the arena the cars are lit from "above" the surface the local camera sits on (null = the normal world). */
+    private static Vector3f surfaceUp;
+    private static Vector3f surfaceForward;
+
+    /** Sets the up and forward direction the lights of the cars follow (the arena: the car drives on walls and the ceiling), or null. */
+    public static void setSurfaceLight(Vector3f up, Vector3f forward) {
+        surfaceUp = up == null ? null : new Vector3f(up);
+        surfaceForward = forward == null ? null : new Vector3f(forward);
+    }
+
     /** Height of the centre of mass: the car pitches / rolls around this point. */
     private static final float PIVOT_HEIGHT = 0.45F;
 
@@ -251,8 +261,18 @@ public final class FennecModel {
         // light directions into model space instead (the matrix is a pure rotation, its inverse is its transpose).
         Matrix3f toModel = pose.normal().transpose(new Matrix3f());
         boolean nether = Minecraft.getInstance().level != null && Minecraft.getInstance().level.effects().constantAmbientLight();
-        Vector3f l0 = toModel.transform(nether ? NETHER_LIGHT_0 : LIGHT_0, new Vector3f());
-        Vector3f l1 = toModel.transform(nether ? NETHER_LIGHT_1 : LIGHT_1, new Vector3f());
+        Vector3f world0 = nether ? NETHER_LIGHT_0 : LIGHT_0;
+        Vector3f world1 = nether ? NETHER_LIGHT_1 : LIGHT_1;
+        if (surfaceUp != null && surfaceForward != null) {
+            Vector3f side = surfaceUp.cross(surfaceForward, new Vector3f());
+            if (side.lengthSquared() > 1.0E-6F) {
+                side.normalize();
+                world0 = new Vector3f(side).mul(0.2F).fma(1.0F, surfaceUp).fma(-0.7F, surfaceForward).normalize();
+                world1 = new Vector3f(side).mul(-0.2F).fma(1.0F, surfaceUp).fma(0.7F, surfaceForward).normalize();
+            }
+        }
+        Vector3f l0 = toModel.transform(world0, new Vector3f());
+        Vector3f l1 = toModel.transform(world1, new Vector3f());
         RenderSystem.setShaderLights(l0, l1);
 
         float r = tint[0];

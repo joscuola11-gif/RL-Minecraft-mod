@@ -1,6 +1,7 @@
 package com.rlfennec;
 
 import com.rlfennec.net.ModNetwork;
+import com.rlfennec.world.ArenaCommand;
 import com.rlfennec.registry.ClientConfig;
 import com.rlfennec.registry.FennecConfig;
 import com.rlfennec.registry.ModEntities;
@@ -12,6 +13,7 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 
 /**
@@ -28,6 +30,7 @@ public class RLFennec {
 
         modBus.addListener(ModNetwork::register);
         modBus.addListener(RLFennec::addToCreativeTab);
+        NeoForge.EVENT_BUS.addListener(ArenaCommand::register);
 
         container.registerConfig(ModConfig.Type.COMMON, FennecConfig.SPEC);
         container.registerConfig(ModConfig.Type.CLIENT, ClientConfig.SPEC, "rlfennec-client.toml");

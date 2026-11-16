@@ -121,6 +121,22 @@ public final class CarPhysics {
     /** Turning a crashed car back on its wheels with the jump key takes exactly one second. */
     public static final int RECOVERY_TICKS = 20;
 
+    // ---- arena mode (driving on the curved floor, walls and ceiling of the Arena) ----
+    /** A wheel is on the surface when it is closer to it than this; three wheels on a surface = the car drives on it. */
+    public static final double SURFACE_CONTACT_DISTANCE = 0.35D;
+    /** The car is pushed this fast towards the surface it drives on (so it stays on walls and ceilings). */
+    public static final double SURFACE_STICK_SPEED = 0.03D;
+    /** Gravity along a wall is weaker than free fall, so that the throttle can take the car up a wall. */
+    public static final double SURFACE_GRAVITY_FACTOR = 0.5D;
+    /** Fraction of the remaining angle the car turns towards the surface normal each tick. */
+    public static final double SURFACE_ALIGN_RATE = 0.5D;
+    /** Fraction of the tangential speed a body (not wheels) keeps each tick it scrapes along a surface. */
+    public static final double BODY_FRICTION = 0.9D;
+    /** A flip touches down when the car's own origin (the bottom of the wheels) is this close to the floor. */
+    public static final double FLIP_TOUCHDOWN_HEIGHT = 0.25D;
+    /** Points of the car below this height (model space) are its "bottom": wheels and underside. */
+    public static final double LOWER_BODY_HEIGHT = 0.45D;
+
     public static final int EVENT_NONE = 0;
     public static final int EVENT_JUMP = 1;
     public static final int EVENT_DOUBLE_JUMP = 2;
@@ -176,6 +192,21 @@ public final class CarPhysics {
     public boolean inWater;
     /** Height of the car above the road below it, in blocks (the entity measures it; it only matters in the air). */
     public double groundDistance = 10.0D;
+
+    // ---- arena mode: the physics moves the car itself (in arena coordinates) and collides its real shape with the Arena ----
+    public boolean arena;
+    public double x;
+    public double y;
+    public double z;
+    /** Result: the wheels are on a surface of the arena (floor, ramp, wall or ceiling). */
+    public boolean onSurface;
+    /** Result: normal of the surface the car drives on (pointing into the pitch), valid while {@link #onSurface}. */
+    public final double[] surfaceNormal = {0.0D, 1.0D, 0.0D};
+    private boolean wasOnSurface;
+    private boolean bodyOnFloor;
+    private boolean wasBodyOnFloor;
+    /** The direction a jump pushes the car in, and the direction the held jump key keeps pushing (up in the normal world). */
+    private final double[] jumpDir = {0.0D, 1.0D, 0.0D};
 
     // ---- own state ----
     public float steer;
@@ -261,7 +292,7 @@ public final class CarPhysics {
             clearCrash(); // the water stands the car up again
         }
         // boost meter (a car lying on its roof cannot boost)
-        boosting = in.boost && boost > 0.0F && !inWater && !(crashed && onGround);
+        boosting = in.boost && boost > 0.0F && !inWater && !(crashed && (arena ? stranded : onGround));
         if (boosting) {
             boost = Math.max(0.0F, boost - BOOST_USE_PER_TICK);
             ticksSinceBoost = 0;
@@ -275,6 +306,14 @@ public final class CarPhysics {
         ticksSinceDodge = Math.min(ticksSinceDodge + 1, 1000);
         if (overspeedGrace > 0) {
             overspeedGrace--;
+        }
+        if (arena) {
+            arenaStep(in);
+            if (vy < -TERMINAL_VELOCITY) {
+                vy = -TERMINAL_VELOCITY;
+            }
+            lastVy = vy;
+            return;
         }
         boolean grounded = onGround && !inWater;
         // the stick that starts a dodge must not also steer the car on this very tick
@@ -340,6 +379,24 @@ public final class CarPhysics {
         yaw += (float) (steer * maxTurn * turnScale * dir * groundSteerScale);
         yaw = wrapDegrees(yaw);
 
+        fs = driveAcceleration(in, fs);
+        ls *= LATERAL_GRIP;
+
+        // re-project the velocity on the (possibly rotated) car
+        rad = Math.toRadians(yaw);
+        fx = -Math.sin(rad);
+        fz = Math.cos(rad);
+        rx = -fz;
+        rz = fx;
+        vx = fx * fs + rx * ls;
+        vz = fz * fs + rz * ls;
+        vy = -0.1D; // keeps the wheels glued to the road and the "on ground" flag stable
+
+        levelOut();
+    }
+
+    /** The new speed along the nose after one tick of throttle / brake / boost / coasting, with the speed limits. */
+    private double driveAcceleration(Input in, double fs) {
         // longitudinal acceleration
         double accel = 0.0D;
         if (in.throttle > 0.0F) {
@@ -368,19 +425,7 @@ public final class CarPhysics {
             fs = Math.max(MAX_SPEED, fs - (overspeedGrace > 0 ? WAVE_DASH_OVERSPEED_DECAY : OVERSPEED_DECAY));
         }
         fs = Math.max(fs, -MAX_REVERSE_SPEED);
-        ls *= LATERAL_GRIP;
-
-        // re-project the velocity on the (possibly rotated) car
-        rad = Math.toRadians(yaw);
-        fx = -Math.sin(rad);
-        fz = Math.cos(rad);
-        rx = -fz;
-        rz = fx;
-        vx = fx * fs + rx * ls;
-        vz = fz * fs + rz * ls;
-        vy = -0.1D; // keeps the wheels glued to the road and the "on ground" flag stable
-
-        levelOut();
+        return fs;
     }
 
     /** Back on the road (or in the water) the car stands upright again, smoothly. */
@@ -423,8 +468,10 @@ public final class CarPhysics {
         }
 
         if (jumpHoldTicks > 0) {
-            if (in.jumpHeld && vy > 0.0D && jumpsUsed == 1) {
-                vy += JUMP_HOLD_ACCEL;
+            if (in.jumpHeld && vx * jumpDir[0] + vy * jumpDir[1] + vz * jumpDir[2] > 0.0D && jumpsUsed == 1) {
+                vx += jumpDir[0] * JUMP_HOLD_ACCEL;
+                vy += jumpDir[1] * JUMP_HOLD_ACCEL;
+                vz += jumpDir[2] * JUMP_HOLD_ACCEL;
                 jumpHoldTicks--;
             } else {
                 jumpHoldTicks = 0;
@@ -667,9 +714,9 @@ public final class CarPhysics {
             }
             return;
         }
-        boolean grounded = onGround && !inWater && resting;
+        boolean grounded = (arena || (onGround && !inWater)) && resting;
         if (grounded) {
-            vy = JUMP_VELOCITY;
+            kick(JUMP_VELOCITY, arena ? surfaceNormal : null);
             jumpHoldTicks = JUMP_HOLD_TICKS;
             jumpsUsed = 1;
             airTicks = 0;
@@ -681,7 +728,7 @@ public final class CarPhysics {
         }
         if (jumpsUsed == 0) {
             // drove off a ledge: the first jump is still available
-            vy = JUMP_VELOCITY * 0.9D;
+            kick(JUMP_VELOCITY * 0.9D, arena ? nearestNormal() : null);
             jumpHoldTicks = JUMP_HOLD_TICKS;
             jumpsUsed = 1;
             event = EVENT_JUMP;
@@ -696,28 +743,41 @@ public final class CarPhysics {
         double dr = in.steer;                      // (also while the free air roll button is held)
         double magnitude = dodgeMagnitude(in);
         if (magnitude < DODGE_DEAD_ZONE) {
-            vy = DOUBLE_JUMP_VELOCITY;
+            if (arena) {
+                double[] f = new double[3];
+                double[] u = new double[3];
+                double[] r = new double[3];
+                basis(yaw, pitch, roll, f, u, r);
+                kick(DOUBLE_JUMP_VELOCITY, u); // along the roof of the car, like Rocket League
+            } else {
+                vy = DOUBLE_JUMP_VELOCITY;
+            }
             return;
         }
         dodgeForward = df / magnitude;
         dodgeRight = dr / magnitude;
         double strength = Math.min(1.0D, magnitude);
 
-        double yawRad = Math.toRadians(yaw);
-        double fx = -Math.sin(yawRad);
-        double fz = Math.cos(yawRad);
-        double rx = -fz;
-        double rz = fx;
         double side = dodgeRight * strength * DODGE_IMPULSE * 0.8D;
         double front = dodgeForward * strength * DODGE_IMPULSE * (dodgeForward < 0.0D ? 0.8D : 1.0D);
-        vy = Math.max(vy * 0.2D, -0.1D) + DODGE_LIFT * clamp01((groundDistance - DODGE_LIFT_MIN_HEIGHT) / 1.2D);
-        vx += fx * front + rx * side;
-        vz += fz * front + rz * side;
-        double h = horizontalSpeed();
-        if (h > MAX_BOOST_SPEED) {
-            double k = MAX_BOOST_SPEED / h;
-            vx *= k;
-            vz *= k;
+        double lift = DODGE_LIFT * clamp01((groundDistance - DODGE_LIFT_MIN_HEIGHT) / 1.2D);
+        if (arena) {
+            arenaDodgeImpulse(front, side, lift);
+        } else {
+            double yawRad = Math.toRadians(yaw);
+            double fx = -Math.sin(yawRad);
+            double fz = Math.cos(yawRad);
+            double rx = -fz;
+            double rz = fx;
+            vy = Math.max(vy * 0.2D, -0.1D) + lift;
+            vx += fx * front + rx * side;
+            vz += fz * front + rz * side;
+            double h = horizontalSpeed();
+            if (h > MAX_BOOST_SPEED) {
+                double k = MAX_BOOST_SPEED / h;
+                vx *= k;
+                vz *= k;
+            }
         }
 
         dodging = true;
@@ -946,14 +1006,447 @@ public final class CarPhysics {
         return x * x * (3.0D - 2.0D * x);
     }
 
+
+    // ------------------------------------------------------------------ arena mode
+
+    /** Sets the speed along {@code dir} (null = straight up, the normal world) to {@code speed}, keeping the rest of the velocity. */
+    private void kick(double speed, double[] dir) {
+        if (dir == null) {
+            vy = speed;
+            jumpDir[0] = 0.0D;
+            jumpDir[1] = 1.0D;
+            jumpDir[2] = 0.0D;
+            return;
+        }
+        double along = vx * dir[0] + vy * dir[1] + vz * dir[2];
+        vx += dir[0] * (speed - along);
+        vy += dir[1] * (speed - along);
+        vz += dir[2] * (speed - along);
+        System.arraycopy(dir, 0, jumpDir, 0, 3);
+    }
+
+    private double[] nearestNormal() {
+        double[] n = new double[3];
+        Arena.normal(x, y, z, n);
+        return n;
+    }
+
+    /** The dodge impulse in the arena: along the car's nose and side flattened onto the nearest surface, plus the lift away from it. */
+    private void arenaDodgeImpulse(double front, double side, double lift) {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        basis(yaw, pitch, roll, f, u, r);
+        double[] nn = nearestNormal();
+        double[] ff = flatten(f, nn);
+        double[] rr = flatten(r, nn);
+        double along = vx * nn[0] + vy * nn[1] + vz * nn[2];
+        double newAlong = Math.max(along * 0.2D, -0.1D) + lift;
+        vx += nn[0] * (newAlong - along) + ff[0] * front + rr[0] * side;
+        vy += nn[1] * (newAlong - along) + ff[1] * front + rr[1] * side;
+        vz += nn[2] * (newAlong - along) + ff[2] * front + rr[2] * side;
+        // the speed along the surface is limited like the boost speed
+        double vn = vx * nn[0] + vy * nn[1] + vz * nn[2];
+        double tx = vx - nn[0] * vn;
+        double ty = vy - nn[1] * vn;
+        double tz = vz - nn[2] * vn;
+        double speed = Math.sqrt(tx * tx + ty * ty + tz * tz);
+        if (speed > MAX_BOOST_SPEED) {
+            double k = MAX_BOOST_SPEED / speed;
+            vx += tx * (k - 1.0D);
+            vy += ty * (k - 1.0D);
+            vz += tz * (k - 1.0D);
+        }
+    }
+
+    /** {@code v} without its part along {@code n}, as a unit vector. */
+    private static double[] flatten(double[] v, double[] n) {
+        double d = dot(v, n);
+        double[] out = {v[0] - n[0] * d, v[1] - n[1] * d, v[2] - n[2] * d};
+        normalize(out);
+        return out;
+    }
+
+    private double[] hullPoint(float[] points, int index, double[] f, double[] u, double[] r) {
+        double hx = points[index * 3];
+        double hy = points[index * 3 + 1];
+        double hz = points[index * 3 + 2];
+        return new double[] {
+                x + f[0] * hx + u[0] * hy + r[0] * hz,
+                y + f[1] * hx + u[1] * hy + r[1] * hz,
+                z + f[2] * hx + u[2] * hy + r[2] * hz};
+    }
+
+    /**
+     * One tick of the car in the arena: the wheels decide whether it drives on a surface (the floor, a ramp, a wall or the
+     * ceiling) or flies; then the car is moved and its real shape (the hull points of the model) is pushed out of the walls.
+     */
+    private void arenaStep(Input in) {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        basis(yaw, pitch, roll, f, u, r);
+        groundDistance = Arena.sd(x, y, z);
+
+        // which wheels touch a surface?
+        int wheels = 0;
+        double[] n = new double[3];
+        double[] wn = new double[3];
+        for (int i = 0; i < 4; i++) {
+            double[] w = hullPoint(CarHull.WHEELS, i, f, u, r);
+            if (Arena.sd(w[0], w[1], w[2]) < SURFACE_CONTACT_DISTANCE) {
+                wheels++;
+                Arena.normal(w[0], w[1], w[2], wn);
+                n[0] += wn[0];
+                n[1] += wn[1];
+                n[2] += wn[2];
+            }
+        }
+        normalize(n);
+        // three wheels on a surface and not moving away from it (a jump) = driving on it
+        boolean grounded = wheels >= 3 && dot(u, n) > 0.35D && vx * n[0] + vy * n[1] + vz * n[2] < 0.12D;
+        if (inWater) {
+            grounded = false;
+        }
+
+        if (grounded) {
+            if (!wasOnSurface) {
+                arenaLanded(n, f);
+            }
+            crashed = false;
+            stranded = false;
+            surfaceStep(in, n, f, u, r);
+            x += vx;
+            y += vy;
+            z += vz;
+            snapToSurface(f, u, r);
+        } else {
+            if (crashed && (wasBodyOnFloor || recovering)) {
+                airTicks = 0;
+                crashedArenaStep();
+            } else {
+                airTicks++;
+                airStep(in);
+            }
+            x += vx;
+            y += vy;
+            z += vz;
+        }
+        wasOnSurface = grounded;
+        onSurface = grounded;
+
+        bodyOnFloor = false;
+        collideWithArena(grounded);
+        wasBodyOnFloor = bodyOnFloor;
+        stranded = crashed && bodyOnFloor && !recovering && !grounded && vx * vx + vy * vy + vz * vz < 0.04D;
+
+        if (in.jump) {
+            tryJump(in, grounded || stranded);
+        }
+    }
+
+    /** The wheels touch a surface after being in the air: a landing (the wave dash gives its burst of speed). */
+    private void arenaLanded(double[] n, double[] f) {
+        clearCrash();
+        if (ticksSinceDodge > WAVE_DASH_WINDOW) {
+            return;
+        }
+        double gain = WAVE_DASH_IMPULSE * (dodgeForward >= 0.0D
+                ? Math.max(dodgeForward, 0.6D * Math.abs(dodgeRight))
+                : dodgeForward * 0.6D);
+        double[] ff = flatten(f, n);
+        double fs = vx * ff[0] + vy * ff[1] + vz * ff[2];
+        double target = gain >= 0.0D ? Math.min(fs + gain, Math.max(fs, WAVE_DASH_MAX_SPEED)) : Math.max(fs + gain, -MAX_REVERSE_SPEED);
+        double delta = target - fs;
+        vx += ff[0] * delta;
+        vy += ff[1] * delta;
+        vz += ff[2] * delta;
+        ticksSinceDodge = 1000;
+        overspeedGrace = WAVE_DASH_GRACE_TICKS;
+        event = EVENT_WAVE_DASH;
+    }
+
+    /** Driving on a surface: the car steers about its roof axis and accelerates along its nose (gravity pulls along walls). */
+    private void surfaceStep(Input in, double[] n, double[] f, double[] u, double[] r) {
+        jumpsUsed = 0;
+        airTicks = 0;
+        dodging = false;
+        coastRate = 0.0F;
+
+        // velocity along the surface, with gravity pulling along it (nothing on a floor or ceiling, weaker than free fall on a wall)
+        double vn = vx * n[0] + vy * n[1] + vz * n[2];
+        double[] vt = {vx - n[0] * vn, vy - n[1] * vn, vz - n[2] * vn};
+        double gn = -GRAVITY * n[1];
+        vt[0] += -n[0] * gn * SURFACE_GRAVITY_FACTOR;
+        vt[1] += (-GRAVITY - n[1] * gn) * SURFACE_GRAVITY_FACTOR;
+        vt[2] += -n[2] * gn * SURFACE_GRAVITY_FACTOR;
+
+        double fs = dot(vt, f);
+        double ls = dot(vt, r);
+
+        // steering about the roof axis: sharper when slow, nothing when standing still, inverted when reversing
+        double abs = Math.abs(fs);
+        double speedFrac = Math.min(abs / MAX_SPEED, 1.0D);
+        double maxTurn = 5.5D + (1.8D - 5.5D) * speedFrac;
+        double turnScale = Math.min(1.0D, abs / 0.07D);
+        double dir = fs >= -0.02D ? 1.0D : -1.0D;
+        double turn = Math.toRadians(steer * maxTurn * turnScale * dir * groundSteerScale);
+        double c = Math.cos(turn);
+        double s = Math.sin(turn);
+        for (int i = 0; i < 3; i++) {
+            double fi = f[i];
+            f[i] = fi * c + r[i] * s;
+            r[i] = r[i] * c - fi * s;
+        }
+
+        fs = driveAcceleration(in, fs);
+        ls *= LATERAL_GRIP;
+
+        vx = f[0] * fs + r[0] * ls - n[0] * SURFACE_STICK_SPEED;
+        vy = f[1] * fs + r[1] * ls - n[1] * SURFACE_STICK_SPEED;
+        vz = f[2] * fs + r[2] * ls - n[2] * SURFACE_STICK_SPEED;
+        angularPitch = 0.0F;
+        angularYaw = 0.0F;
+        angularRoll = 0.0F;
+    }
+
+    /**
+     * After the car moved along a surface: fits it to the surface under its wheels. The four wheels rest on the surface,
+     * so the roof turns to the plane through the four contact points (the car pitches up a ramp, rolls onto a wall, and
+     * follows the curves), the velocity turns with the car (the speed is kept) and the car is placed on the surface.
+     */
+    private void snapToSurface(double[] f, double[] u, double[] r) {
+        double[][] q = new double[4][];
+        double[] n = new double[3];
+        double[] avg = new double[3];
+        for (int i = 0; i < 4; i++) {
+            double[] w = hullPoint(CarHull.WHEELS, i, f, u, r);
+            double d = Arena.sd(w[0], w[1], w[2]);
+            Arena.normal(w[0], w[1], w[2], n);
+            q[i] = new double[] {w[0] - n[0] * d, w[1] - n[1] * d, w[2] - n[2] * d};
+            avg[0] += n[0];
+            avg[1] += n[1];
+            avg[2] += n[2];
+        }
+        // order: front right, front left, rear right, rear left
+        double[] a = new double[3];
+        double[] b = new double[3];
+        for (int i = 0; i < 3; i++) {
+            a[i] = (q[0][i] + q[1][i]) * 0.5D - (q[2][i] + q[3][i]) * 0.5D; // rear -> front
+            b[i] = (q[0][i] + q[2][i]) * 0.5D - (q[1][i] + q[3][i]) * 0.5D; // left -> right
+        }
+        double[] fit = cross(b, a); // right x forward = roof
+        normalize(avg);
+        if (dot(fit, avg) < 0.0D) {
+            fit[0] = -fit[0];
+            fit[1] = -fit[1];
+            fit[2] = -fit[2];
+        }
+        normalize(fit);
+        if (dot(fit, fit) < 0.5D || dot(fit, avg) < 0.3D) {
+            fit = avg; // degenerate: fall back to the average normal
+        }
+
+        double[] axis = cross(u, fit);
+        double sin = Math.sqrt(dot(axis, axis));
+        double angle = Math.atan2(sin, dot(u, fit));
+        if (sin > 1.0E-9D && angle > 1.0E-6D) {
+            angle = Math.min(angle, Math.toRadians(35.0D));
+            for (int i = 0; i < 3; i++) {
+                axis[i] /= sin;
+            }
+            double[] v = {vx, vy, vz};
+            rotateAbout(axis, angle, f, u, r, v);
+            vx = v[0];
+            vy = v[1];
+            vz = v[2];
+        }
+        normalize(f);
+        double d = dot(u, f);
+        for (int i = 0; i < 3; i++) {
+            u[i] -= d * f[i];
+        }
+        normalize(u);
+        double[] rr = cross(f, u);
+        System.arraycopy(rr, 0, r, 0, 3);
+
+        // place the car so that the wheels rest on the surface
+        double mean = 0.0D;
+        for (int i = 0; i < 4; i++) {
+            double[] w = hullPoint(CarHull.WHEELS, i, f, u, r);
+            mean += Arena.sd(w[0], w[1], w[2]);
+        }
+        mean /= 4.0D;
+        x -= fit[0] * mean;
+        y -= fit[1] * mean;
+        z -= fit[2] * mean;
+
+        double[] euler = euler(f, u, yaw);
+        yaw = (float) euler[0];
+        pitch = (float) euler[1];
+        roll = (float) euler[2];
+        System.arraycopy(fit, 0, surfaceNormal, 0, 3);
+    }
+
+    /** Puts the car upright on a surface, keeping the way it faces (its nose flattened onto the surface). */
+    private void levelOnto(double[] n) {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        basis(yaw, pitch, roll, f, u, r);
+        double[] ft = flatten(f, n);
+        if (dot(ft, ft) < 0.5D) {
+            ft = flatten(new double[] {vx, vy, vz}, n);
+        }
+        if (dot(ft, ft) < 0.5D) {
+            ft = flatten(r, n);
+        }
+        double[] un = {n[0], n[1], n[2]};
+        setOrientation(ft, un);
+        basis(yaw, pitch, roll, f, u, r);
+        // lift the car until no wheel is below the surface
+        double lowest = Double.MAX_VALUE;
+        for (int i = 0; i < 4; i++) {
+            double[] w = hullPoint(CarHull.WHEELS, i, f, u, r);
+            lowest = Math.min(lowest, Arena.sd(w[0], w[1], w[2]));
+        }
+        if (lowest < 0.0D) {
+            x -= n[0] * lowest;
+            y -= n[1] * lowest;
+            z -= n[2] * lowest;
+        }
+    }
+
+    /** A crashed car on the floor: it slides to a stop and tips onto its roof or side (the driver turns it over with the jump key). */
+    private void crashedArenaStep() {
+        vx *= CRASHED_FRICTION;
+        vz *= CRASHED_FRICTION;
+        vy -= GRAVITY;
+        angularPitch = 0.0F;
+        angularYaw = 0.0F;
+        angularRoll = 0.0F;
+        if (recovering) {
+            recoveryStep();
+        } else {
+            topple();
+        }
+    }
+
+    /**
+     * Pushes the shape of the car out of the walls: every outline point of the model and the four wheel contacts must stay
+     * inside the arena. A hit with the wheels is a landing; a hit with the body bounces, scrapes and (on the floor,
+     * roof down) is a crash.
+     */
+    private void collideWithArena(boolean driving) {
+        double[] f = new double[3];
+        double[] u = new double[3];
+        double[] r = new double[3];
+        basis(yaw, pitch, roll, f, u, r);
+        double[] n = new double[3];
+        for (int iteration = 0; iteration < 4; iteration++) {
+            double worst = 0.0D;
+            double[] worstPoint = null;
+            boolean wheel = false;
+            int count = CarHull.POINTS.length / 3;
+            for (int i = 0; i < count; i++) {
+                double[] p = hullPoint(CarHull.POINTS, i, f, u, r);
+                double d = Arena.sd(p[0], p[1], p[2]);
+                if (d < worst) {
+                    worst = d;
+                    worstPoint = p;
+                    // the wheels and the underside of the car (below the doors) are the "bottom": touching down on them is a landing
+                    wheel = CarHull.POINTS[i * 3 + 1] < LOWER_BODY_HEIGHT;
+                }
+            }
+            for (int i = 0; i < 4; i++) {
+                double[] p = hullPoint(CarHull.WHEELS, i, f, u, r);
+                double d = Arena.sd(p[0], p[1], p[2]);
+                if (d < worst) {
+                    worst = d;
+                    worstPoint = p;
+                    wheel = true;
+                }
+            }
+            if (worstPoint == null) {
+                return;
+            }
+            Arena.normal(worstPoint[0], worstPoint[1], worstPoint[2], n);
+            double roofToWall = dot(u, n);
+            if (n[1] > 0.7D && ticksSinceDodge <= DODGE_TICKS && !driving) {
+                // A flip close to the floor turns the car through the floor, like in the normal world, until the car itself
+                // touches down; then the ground cancels the flip (the wave dash) or, past the window, it is a normal landing.
+                if (Arena.sd(x, y, z) > FLIP_TOUCHDOWN_HEIGHT) {
+                    return;
+                }
+                if (ticksSinceDodge <= WAVE_DASH_WINDOW && roofToWall >= CRASH_LANDING_ROOF_UP) {
+                    double vnDash = vx * n[0] + vy * n[1] + vz * n[2];
+                    levelOnto(n);
+                    if (vnDash < 0.0D) {
+                        vx -= n[0] * vnDash;
+                        vy -= n[1] * vnDash;
+                        vz -= n[2] * vnDash;
+                    }
+                    wasOnSurface = false; // the next tick is a landing (it gives the wave dash its speed)
+                    return;
+                }
+            }
+            x -= n[0] * worst;
+            y -= n[1] * worst;
+            z -= n[2] * worst;
+
+            double vn = vx * n[0] + vy * n[1] + vz * n[2];
+            if (vn >= 0.0D) {
+                continue;
+            }
+            if (driving && roofToWall > SAFE_LANDING_ROOF_UP) {
+                continue; // driving on the surface: the car is only moved out of it, the snap to the wheels' plane keeps the velocity
+            }
+            if (wheel && roofToWall > SAFE_LANDING_ROOF_UP) {
+                // the wheels touch down: no bounce
+                vx -= n[0] * vn;
+                vy -= n[1] * vn;
+                vz -= n[2] * vn;
+                continue;
+            }
+            // the body hits: bounce a little, scrape along the surface
+            double impact = -vn;
+            double bounce = impact > BOUNCE_MIN_IMPACT ? Math.min(impact * BOUNCE_RESTITUTION, BOUNCE_MAX_SPEED) : 0.0D;
+            vx += n[0] * (bounce - vn);
+            vy += n[1] * (bounce - vn);
+            vz += n[2] * (bounce - vn);
+            double vn2 = vx * n[0] + vy * n[1] + vz * n[2];
+            vx = n[0] * vn2 + (vx - n[0] * vn2) * BODY_FRICTION;
+            vy = n[1] * vn2 + (vy - n[1] * vn2) * BODY_FRICTION;
+            vz = n[2] * vn2 + (vz - n[2] * vn2) * BODY_FRICTION;
+            if (n[1] > 0.7D) {
+                bodyOnFloor = true;
+                if (roofToWall < SAFE_LANDING_ROOF_UP) {
+                    crashed = true;
+                    jumpsUsed = 2;
+                    jumpHoldTicks = 0;
+                    dodging = false;
+                    coastRate = 0.0F;
+                }
+            }
+        }
+    }
+
     private static double dodgeMagnitude(Input in) {
         double df = in.pitch;
         double dr = in.steer;
         return Math.sqrt(df * df + dr * dr);
     }
 
+    private static void rotateAbout(double[] axis, double angle, double[] f, double[] u, double[] r, double[] extra) {
+        rotateAbout(axis, angle, new double[][] {f, u, r, extra});
+    }
+
     private static void rotateAbout(double[] axis, double angle, double[] f, double[] u, double[] r) {
-        for (double[] v : new double[][] {f, u, r}) {
+        rotateAbout(axis, angle, new double[][] {f, u, r});
+    }
+
+    private static void rotateAbout(double[] axis, double angle, double[][] vectors) {
+        for (double[] v : vectors) {
             double c = Math.cos(angle);
             double s = Math.sin(angle);
             double d = dot(axis, v) * (1.0D - c);

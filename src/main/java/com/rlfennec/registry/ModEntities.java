@@ -1,6 +1,7 @@
 package com.rlfennec.registry;
 
 import com.rlfennec.RLFennec;
+import com.rlfennec.entity.BoostPadEntity;
 import com.rlfennec.entity.FennecEntity;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.entity.EntityType;
@@ -18,6 +19,15 @@ public final class ModEntities {
                     .clientTrackingRange(16)
                     .updateInterval(1)
                     .build("fennec"));
+
+    public static final DeferredHolder<EntityType<?>, EntityType<BoostPadEntity>> BOOST_PAD = ENTITIES.register("boost_pad",
+            () -> EntityType.Builder.<BoostPadEntity>of(BoostPadEntity::new, MobCategory.MISC)
+                    .sized(2.0F, 0.2F)
+                    .clientTrackingRange(16)
+                    .updateInterval(20)
+                    .noSummon()
+                    .fireImmune()
+                    .build("boost_pad"));
 
     private ModEntities() {
     }

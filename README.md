@@ -53,6 +53,19 @@ Quattro regolatori (da 0,2 a 3,0, 1,0 è la velocità normale): sterzata a terra
 * Finché l'auto è ribaltata non si guida, non sterza, non salta e non usa il boost. Se scendi, o scendi e sale qualcun altro, l'auto si rimette in piedi da sola; anche l'acqua la rimette in piedi.
 * Il flip che finisce con l'atterraggio entro mezzo secondo (wave dash) non è uno schianto, anche se l'auto è ancora inclinata: viene raddrizzata come prima.
 
+## L'arena: Salty Shores (notte)
+
+Per entrare scrivi `/rlfennec arena`: ti porta nella dimensione **`rlfennec:salty_shores`** a bordo di una Fennec, al punto di kickoff della squadra blu. Per tornare nel mondo normale: `/rlfennec arena leave`. Nella dimensione è **sempre notte** e **non piove mai** (nemmeno se nel mondo normale piove). Serve un mondo aperto con la mod installata: la dimensione si carica insieme alla mod.
+
+* **Forma**: ricalca l'arena standard di Rocket League (8192 × 10240 × 2044 uu, angoli tagliati a 45° di 1152 uu), con **1 blocco = 50 uu**, quindi circa 164 × 204 blocchi e 41 di altezza, **con il tetto**. Il pavimento sale nelle pareti con una **curva vera** (raggio 8 blocchi), come le pareti salgono nel tetto e gli angoli sono tondi: non sono scalini di blocchi, è una superficie liscia disegnata e calcolata dalla stessa formula, quindi quello che vedi è esattamente quello su cui guida l'auto (un test verifica che ogni vertice disegnato stia sulla superficie della fisica).
+* **Si guida dappertutto**: sul pavimento, sulle rampe, sulle pareti, negli angoli e **sul soffitto**. L'auto si allinea alla superficie sotto le ruote (3 ruote su una superficie = ci guida sopra), tiene la velocità sulle curve, sale sulle pareti col boost o con una buona rincorsa e può guidare a testa in giù. Da una parete il salto ti stacca dalla parete (non verso l'alto). Il flip, il wave dash e lo schianto funzionano anche lì, rispetto alla superficie.
+* **Hitbox precisa**: nell'arena l'auto non ha una scatola ma la **forma vera del modello** (204 punti sul contorno + i 4 punti di contatto delle ruote, `tools/generate_hull.py`), orientata come l'auto in ogni momento. Il muso, il tetto e le ruote toccano il muro dove le tocca il modello, e un'auto ribaltata appoggia sul tetto e non affonda. Fuori dall'arena resta la scatola di Minecraft, ma anche lì l'auto ribaltata viene appoggiata a terra usando la stessa forma.
+* **Boost pad**: **6 grandi** (100 di boost, tornano dopo 10 secondi, con la sfera dorata sopra) e **28 piccoli** (12 di boost, tornano dopo 4 secondi), nelle posizioni della mappa standard. Sono ricostruiti dalle immagini che mi hai dato: piastra d'argento a triangolo con tre lobi e bordo nero, frecce, presa tonda con anelli arancioni, tre feritoie con le fiamme ai vertici, colonna di luce ambra e la sfera che gira e ondeggia; il piccolo è un esagono arrotondato con un anello e una colonna bassa. Quando li prendi si spengono. Come in Rocket League un pad non si consuma se hai già 100 di boost. La raccolta è decisa dal client di chi guida, come il resto del boost.
+* **Camera**: segue l'auto sulle pareti e sul soffitto (l'alto della visuale è il tetto dell'auto mentre ci guidi sopra; in aria torna al cielo) e non ti fa girare la testa nei flip.
+* **Luci**: il campo è a strisce con le linee e i colori delle due squadre (blu da un lato, arancione dall'altro), le pareti hanno le righe luminose e il tetto i pannelli di luce.
+* **Cosa non c'è**: le porte (c'è solo il rettangolo disegnato sul muro) e la palla. Chi cammina a piedi nell'arena non trova muri solidi (le pareti sono per l'auto).
+* **Il video**: non sono riuscito ad aprire il video di YouTube (la rete di questa sessione non raggiunge YouTube), quindi la forma viene dalle misure standard di Rocket League e dalle tue due immagini dei boost pad. Le posizioni dei 34 pad sono quelle della mappa standard (le conosco a memoria, non le ho potute ricontrollare online perché i siti di riferimento non erano raggiungibili): se qualcuna ti sembra fuori posto dimmelo e la sposto in `Arena.java`.
+
 ## Compilare
 
 Serve JDK 21.
@@ -97,7 +110,8 @@ Il modello è quello del file che mi hai dato (`fennec_-_rocket_league_car.obj`,
 ```bash
 python3 tools/convert_fennec_model.py percorso/fennec_-_rocket_league_car.obj
 python3 tools/render_icon.py      # rigenera l'icona dell'oggetto
-python3 tools/generate_hull.py    # rigenera il contorno usato per appoggiare l'auto ribaltata a terra
+python3 tools/generate_hull.py    # rigenera la forma dell'auto (hitbox) e i punti di contatto delle ruote
+python3 tools/generate_arena_textures.py   # rigenera la texture del campo dell'arena
 ```
 
 > Il modello e le texture della Fennec sono proprietà di Psyonix/Epic Games. Il codice di questa mod è libero (MIT), ma gli asset del modello non lo sono: tienili per uso personale e non ridistribuire il jar.
@@ -108,7 +122,7 @@ Come per le barche, l'auto è simulata dal client di chi guida (sterzo senza rit
 
 ## Cosa non c'è (ancora)
 
-* Pad del boost sul terreno (ora il boost si ricarica da solo, vedi sopra).
+* Nel mondo normale i pad del boost non ci sono (ci sono nell'arena; fuori il boost si ricarica da solo, vedi sopra).
 * Palla e porte. È solo l'auto.
 * Non è stato provato su un server dedicato né con due giocatori.
 * Il controller è provato solo a livello di logica (la mappatura ha i test, la lettura di GLFW non dà errori senza pad collegato) ma non con un pad fisico. La tastiera è stata provata con veri eventi di tasto in un client Minecraft reale.

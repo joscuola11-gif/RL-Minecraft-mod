@@ -7,6 +7,7 @@ import com.rlfennec.net.DismountPayload;
 import com.rlfennec.input.PadAction;
 import com.rlfennec.registry.ClientConfig;
 import com.rlfennec.registry.FennecConfig;
+import com.rlfennec.world.ArenaWorld;
 import java.util.List;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
@@ -19,6 +20,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -47,6 +49,16 @@ public final class ClientGameEvents {
     private static float cameraYawO;
     private static boolean jumpHeld;
     private static boolean exitHeld;
+
+    // chase camera in the arena: it follows the car over walls and ceiling (up = the roof of the car while it drives on a surface)
+    private static final Vector3f camUp = new Vector3f(0.0F, 1.0F, 0.0F);
+    private static final Vector3f camFwd = new Vector3f(0.0F, 0.0F, 1.0F);
+    private static float arenaYaw;
+    private static float arenaYawO;
+    private static float arenaPitch;
+    private static float arenaPitchO;
+    private static float arenaRoll;
+    private static float arenaRollO;
 
     private ClientGameEvents() {
     }
@@ -78,6 +90,7 @@ public final class ClientGameEvents {
             if (wasDriving) {
                 wasDriving = false;
                 options.setCameraType(previousCamera);
+                FennecModel.setSurfaceLight(null, null);
             }
             fovBoost *= 0.8F;
             if (listening && padEnterExit && exitPressed) {
@@ -93,6 +106,9 @@ public final class ClientGameEvents {
             cameraYaw = car.getYRot();
             cameraYawO = cameraYaw;
             mc.player.setXRot(NEUTRAL_VIEW_PITCH);
+            if (ArenaWorld.isArena(mc.level)) {
+                startArenaCamera(car);
+            }
             exitHeld = exitDown; // a key still held from before does not count as pressing it
             exitPressed = false;
         }
@@ -140,7 +156,113 @@ public final class ClientGameEvents {
 
         car.setClientInput(throttle, steer, pitch, roll, airRollFree, jump, jumpDown, boost);
 
-        updateCamera(car);
+        if (!ArenaWorld.isArena(mc.level)) {
+            updateCamera(car);
+        }
+    }
+
+    /** After the car moved this tick: the arena camera (it also turns the player so that the third person view is placed behind the car). */
+    @SubscribeEvent
+    public static void onClientTickPost(ClientTickEvent.Post event) {
+        Minecraft mc = Minecraft.getInstance();
+        FennecEntity car = drivenCar(mc);
+        if (car != null && ArenaWorld.isArena(mc.level)) {
+            updateArenaCamera(mc, car);
+        }
+    }
+
+    private static Vector3f flatten(Vector3f v, Vector3f n) {
+        Vector3f out = new Vector3f(v).fma(-v.dot(n), n);
+        if (out.lengthSquared() < 1.0E-6F) {
+            return null;
+        }
+        return out.normalize();
+    }
+
+    private static void startArenaCamera(FennecEntity car) {
+        Quaternionf q = car.getOrientation(1.0F);
+        q.transform(new Vector3f(0.0F, 1.0F, 0.0F), camUp);
+        Vector3f f = q.transform(new Vector3f(1.0F, 0.0F, 0.0F));
+        Vector3f flat = flatten(f, camUp);
+        camFwd.set(flat != null ? flat : new Vector3f(0.0F, 0.0F, 1.0F));
+        arenaYaw = arenaYawO = 0.0F;
+        arenaPitch = arenaPitchO = NEUTRAL_VIEW_PITCH;
+        arenaRoll = arenaRollO = 0.0F;
+        computeArenaAngles(true);
+    }
+
+    private static void updateArenaCamera(Minecraft mc, FennecEntity car) {
+        Quaternionf q = car.getOrientation(1.0F);
+        Vector3f f = q.transform(new Vector3f(1.0F, 0.0F, 0.0F));
+        Vector3f u = q.transform(new Vector3f(0.0F, 1.0F, 0.0F));
+        boolean grounded = car.onGround();
+
+        // up: the roof of the car while it drives on a surface (walls, ceiling), the sky while it flies
+        camUp.lerp(grounded ? u : new Vector3f(0.0F, 1.0F, 0.0F), grounded ? 0.25F : 0.08F).normalize();
+
+        // forward: the nose on a surface; in the air where the car travels (the nose swings round in flips)
+        Vector3f target = null;
+        if (grounded) {
+            target = flatten(f, camUp);
+        } else {
+            Vec3 v = car.getDeltaMovement();
+            Vector3f travel = new Vector3f((float) v.x, (float) v.y, (float) v.z);
+            Vector3f flat = flatten(travel, camUp);
+            if (flat != null && travel.length() > 0.15F && flat.dot(camFwd) > -0.17F) {
+                target = flat;
+            }
+        }
+        if (target != null) {
+            camFwd.lerp(target, 0.35F);
+        }
+        Vector3f fixed = flatten(camFwd, camUp);
+        if (fixed != null) {
+            camFwd.set(fixed);
+        }
+        arenaYawO = arenaYaw;
+        arenaPitchO = arenaPitch;
+        arenaRollO = arenaRoll;
+        computeArenaAngles(false);
+
+        if (mc.player != null) {
+            // the third person camera is placed from the player's view: the player looks along the camera
+            mc.player.setYRot(arenaYaw);
+            mc.player.yRotO = arenaYawO;
+            mc.player.setXRot(arenaPitch);
+            mc.player.xRotO = arenaPitchO;
+        }
+
+        FennecModel.setSurfaceLight(camUp, camFwd);
+
+        float speedFrac = Mth.clamp((float) car.getSpeed() / 1.7F, 0.0F, 1.0F);
+        float fovTarget = (car.isBoosting() ? 12.0F : 0.0F) + speedFrac * speedFrac * 6.0F;
+        fovBoost += (fovTarget - fovBoost) * 0.12F;
+        float distTarget = car.isBoosting() ? 7.5F : 6.5F;
+        cameraDistance += (distTarget - cameraDistance) * 0.1F;
+    }
+
+    /** Yaw, pitch and roll of a camera that looks along camFwd tilted down a little and has camUp as its up. */
+    private static void computeArenaAngles(boolean snap) {
+        float tilt = (float) Math.toRadians(NEUTRAL_VIEW_PITCH);
+        Vector3f d = new Vector3f(camFwd).mul((float) Math.cos(tilt)).fma(-(float) Math.sin(tilt), camUp).normalize();
+        float yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
+        float pitch = (float) Math.toDegrees(Math.asin(Mth.clamp(-d.y, -1.0F, 1.0F)));
+        Vector3f right = d.cross(0.0F, 1.0F, 0.0F, new Vector3f());
+        float roll = 0.0F;
+        if (right.lengthSquared() > 1.0E-6F) {
+            right.normalize();
+            Vector3f horizonUp = right.cross(d, new Vector3f());
+            roll = (float) Math.toDegrees(Math.atan2(camUp.dot(right), camUp.dot(horizonUp)));
+        }
+        // continuous angles (no jump at +-180)
+        arenaYaw = snap ? yaw : arenaYawO + Mth.wrapDegrees(yaw - arenaYawO);
+        arenaPitch = pitch;
+        arenaRoll = snap ? roll : arenaRollO + Mth.wrapDegrees(roll - arenaRollO);
+        if (snap) {
+            arenaYawO = arenaYaw;
+            arenaPitchO = arenaPitch;
+            arenaRollO = arenaRoll;
+        }
     }
 
     /** While driving, sneaking must not dismount: getting out is the "Exit" key (or the controller). */
@@ -249,8 +371,14 @@ public final class ClientGameEvents {
 
     @SubscribeEvent
     public static void onCameraAngles(ViewportEvent.ComputeCameraAngles event) {
-        FennecEntity car = drivenCar(Minecraft.getInstance());
-        if (car != null) {
+        Minecraft mc = Minecraft.getInstance();
+        FennecEntity car = drivenCar(mc);
+        if (car != null && ArenaWorld.isArena(mc.level)) {
+            float t = (float) event.getPartialTick();
+            event.setYaw(Mth.rotLerp(t, arenaYawO, arenaYaw));
+            event.setPitch(Mth.lerp(t, arenaPitchO, arenaPitch));
+            event.setRoll(Mth.rotLerp(t, arenaRollO, arenaRoll));
+        } else if (car != null) {
             // the camera follows the car instead of the mouse; looking up / down with the mouse still works
             event.setYaw(Mth.rotLerp((float) event.getPartialTick(), cameraYawO, cameraYaw));
             event.setPitch(Mth.clamp(event.getPitch(), -45.0F, 85.0F));
@@ -276,5 +404,6 @@ public final class ClientGameEvents {
         RLFennecClient.clear();
         wasDriving = false;
         fovBoost = 0.0F;
+        FennecModel.setSurfaceLight(null, null);
     }
 }

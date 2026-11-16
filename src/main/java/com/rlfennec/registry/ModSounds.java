@@ -21,6 +21,8 @@ public final class ModSounds {
     public static final DeferredHolder<SoundEvent, SoundEvent> BOOST_START = register("fennec.boost_start");
     public static final DeferredHolder<SoundEvent, SoundEvent> JUMP = register("fennec.jump");
     public static final DeferredHolder<SoundEvent, SoundEvent> FLIP = register("fennec.flip");
+    /** A boost pad was picked up. */
+    public static final DeferredHolder<SoundEvent, SoundEvent> PAD = register("fennec.pad");
 
     private ModSounds() {
     }

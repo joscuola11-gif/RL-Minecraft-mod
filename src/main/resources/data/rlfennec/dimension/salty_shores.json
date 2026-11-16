@@ -1,0 +1,18 @@
+{
+  "type": "rlfennec:salty_shores",
+  "generator": {
+    "type": "minecraft:flat",
+    "settings": {
+      "biome": "rlfennec:salty_shores",
+      "features": false,
+      "lakes": false,
+      "layers": [
+        {"block": "minecraft:bedrock", "height": 1},
+        {"block": "minecraft:stone", "height": 59},
+        {"block": "minecraft:sandstone", "height": 3},
+        {"block": "minecraft:sand", "height": 1}
+      ],
+      "structure_overrides": []
+    }
+  }
+}

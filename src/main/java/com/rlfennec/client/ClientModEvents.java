@@ -24,6 +24,7 @@ public final class ClientModEvents {
     @SubscribeEvent
     public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(ModEntities.FENNEC.get(), FennecRenderer::new);
+        event.registerEntityRenderer(ModEntities.BOOST_PAD.get(), BoostPadRenderer::new);
     }
 
     @SubscribeEvent
@@ -52,6 +53,10 @@ public final class ClientModEvents {
 
     @SubscribeEvent
     public static void registerReloadListeners(RegisterClientReloadListenersEvent event) {
-        event.registerReloadListener((ResourceManagerReloadListener) manager -> FennecModel.reset());
+        event.registerReloadListener((ResourceManagerReloadListener) manager -> {
+            FennecModel.reset();
+            ArenaRenderer.reset();
+            BoostPadRenderer.reset();
+        });
     }
 }

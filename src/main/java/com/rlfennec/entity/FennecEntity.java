@@ -2,11 +2,15 @@ package com.rlfennec.entity;
 
 import com.rlfennec.client.RLFennecClient;
 import com.rlfennec.net.CarControlPayload;
+import com.rlfennec.net.PadPickupPayload;
+import com.rlfennec.physics.Arena;
+import com.rlfennec.physics.CarHull;
 import com.rlfennec.physics.CarPhysics;
 import com.rlfennec.registry.ClientConfig;
 import com.rlfennec.registry.FennecConfig;
 import com.rlfennec.registry.ModItems;
 import com.rlfennec.registry.ModSounds;
+import com.rlfennec.world.ArenaWorld;
 import com.google.common.collect.Lists;
 import java.util.List;
 import javax.annotation.Nullable;
@@ -162,6 +166,7 @@ public class FennecEntity extends VehicleEntity {
             this.physics.clearCrash(); // an empty car stands itself up, nobody is there to turn it over
         }
 
+        boolean inArena = ArenaWorld.isArena(this.level());
         Vec3 dm = this.getDeltaMovement();
         this.physics.vx = dm.x;
         this.physics.vy = dm.y;
@@ -169,9 +174,18 @@ public class FennecEntity extends VehicleEntity {
         this.physics.yaw = this.getYRot();
         this.physics.pitch = this.getXRot();
         this.physics.roll = this.roll;
-        this.physics.groundDistance = this.onGround() ? 0.0D : this.measureGroundDistance();
-        this.physics.onGround = this.onGround();
-        this.physics.inWater = this.isInWater();
+        this.physics.arena = inArena;
+        if (inArena) {
+            // in the arena the physics moves the car itself and collides its real shape with the curved floor, walls and ceiling
+            this.physics.x = this.getX() - ArenaWorld.ORIGIN_X;
+            this.physics.y = this.getY() - ArenaWorld.ORIGIN_Y;
+            this.physics.z = this.getZ() - ArenaWorld.ORIGIN_Z;
+            this.physics.inWater = false;
+        } else {
+            this.physics.groundDistance = this.onGround() ? 0.0D : this.measureGroundDistance();
+            this.physics.onGround = this.onGround();
+            this.physics.inWater = this.isInWater();
+        }
         this.physics.groundSteerScale = ClientConfig.groundSteer();
         this.physics.airPitchScale = ClientConfig.airPitchSpeed();
         this.physics.airYawScale = ClientConfig.airYawSpeed();
@@ -186,7 +200,12 @@ public class FennecEntity extends VehicleEntity {
         this.setXRot(this.physics.pitch);
         this.roll = this.physics.roll;
         this.setDeltaMovement(this.physics.vx, this.physics.vy, this.physics.vz);
-        this.move(MoverType.SELF, this.getDeltaMovement());
+        if (inArena) {
+            this.setPos(ArenaWorld.ORIGIN_X + this.physics.x, ArenaWorld.ORIGIN_Y + this.physics.y, ArenaWorld.ORIGIN_Z + this.physics.z);
+            this.setOnGround(this.physics.onSurface);
+        } else {
+            this.move(MoverType.SELF, this.getDeltaMovement());
+        }
 
         if (this.physics.event != CarPhysics.EVENT_NONE) {
             this.jumpCounter++;
@@ -198,12 +217,42 @@ public class FennecEntity extends VehicleEntity {
 
         if (this.level().isClientSide) {
             if (driven) {
+                this.checkBoostPads();
                 this.sendControlToServer();
             }
         } else {
             this.entityData.set(DATA_BOOST, this.physics.boost);
             this.entityData.set(DATA_BOOSTING, false);
             this.entityData.set(DATA_ORIENTATION, new Quaternionf(this.orientation));
+        }
+    }
+
+    /** The driving client takes the boost of every active pad the car touches and tells the server (which starts the pad's timer). */
+    private void checkBoostPads() {
+        if (!ArenaWorld.isArena(this.level())) {
+            return;
+        }
+        Vector3f roof = this.orientation.transform(new Vector3f(0.0F, 1.0F, 0.0F));
+        // the centre of the car: the middle of the body, 0.45 blocks above the axles along the roof
+        double cx = this.getX() + roof.x * 0.45D;
+        double cy = this.getY() + roof.y * 0.45D;
+        double cz = this.getZ() + roof.z * 0.45D;
+        for (BoostPadEntity pad : this.level().getEntitiesOfClass(BoostPadEntity.class, this.getBoundingBox().inflate(5.0D, 4.0D, 5.0D))) {
+            // (like in Rocket League a pad is not used up while the boost meter is already full)
+            if (!pad.isActive() || this.physics.boost >= CarPhysics.MAX_BOOST - 0.01F) {
+                continue;
+            }
+            double dx = cx - pad.getX();
+            double dz = cz - pad.getZ();
+            double dy = cy - pad.getY();
+            double r = pad.pickupRadius();
+            if (dx * dx + dz * dz <= r * r && dy > -0.5D && dy < Arena.PAD_HEIGHT) {
+                this.physics.boost = Math.min(CarPhysics.MAX_BOOST, this.physics.boost + pad.boostAmount());
+                pad.setActiveLocally(false);
+                PacketDistributor.sendToServer(new PadPickupPayload(pad.getId()));
+                this.level().playLocalSound(this.getX(), this.getY(), this.getZ(), ModSounds.PAD.get(), SoundSource.NEUTRAL,
+                        1.0F, pad.isBig() ? 0.8F : 1.2F, false);
+            }
         }
     }
 
@@ -263,15 +312,16 @@ public class FennecEntity extends VehicleEntity {
 
     private void clientVisualTick() {
         double dx = this.getX() - this.xo;
+        double dy = this.getY() - this.yo;
         double dz = this.getZ() - this.zo;
-        double yawRad = Math.toRadians(this.getYRot());
-        double forward = dx * -Math.sin(yawRad) + dz * Math.cos(yawRad);
+        Vector3f noseDir = this.orientation.transform(new Vector3f(1.0F, 0.0F, 0.0F));
+        double forward = dx * noseDir.x + dy * noseDir.y + dz * noseDir.z;
 
         this.wheelRollO = this.wheelRoll;
         this.wheelRoll += (float) (forward / WHEEL_RADIUS);
 
         float dyaw = Mth.wrapDegrees(this.getYRot() - this.yRotO);
-        float target = Mth.clamp(dyaw * 7.0F, -32.0F, 32.0F);
+        float target = this.isLocallyDriven() ? this.physics.steer * 30.0F : Mth.clamp(dyaw * 7.0F, -32.0F, 32.0F);
         this.steerAngleO = this.steerAngle;
         this.steerAngle += (target - this.steerAngle) * 0.4F;
 
@@ -403,7 +453,7 @@ public class FennecEntity extends VehicleEntity {
         float pivot = 0.45F;
         float lowest = Float.MAX_VALUE;
         Vector3f p = new Vector3f();
-        float[] points = FennecHull.POINTS;
+        float[] points = CarHull.POINTS;
         for (int i = 0; i < points.length; i += 3) {
             p.set(points[i], points[i + 1] - pivot, points[i + 2]);
             this.orientation.transform(p);
@@ -415,7 +465,7 @@ public class FennecEntity extends VehicleEntity {
     private void updateVisualLift() {
         this.visualLiftO = this.visualLift;
         float target = 0.0F;
-        if (this.onGround()) {
+        if (this.onGround() && !ArenaWorld.isArena(this.level())) {
             target = Math.max(0.0F, -this.lowestPoint());
         }
         this.visualLift += (target - this.visualLift) * 0.4F;
@@ -527,11 +577,25 @@ public class FennecEntity extends VehicleEntity {
 
     @Override
     protected Vec3 getPassengerAttachmentPoint(Entity passenger, EntityDimensions dimensions, float scale) {
+        if (ArenaWorld.isArena(this.level())) {
+            // the (invisible) driver is the camera's target: a point above the car along its roof, so that the view
+            // follows the car when it drives on a wall or the ceiling
+            Vector3f roof = this.orientation.transform(new Vector3f(0.0F, 1.0F, 0.0F));
+            Vec3 target = new Vec3(roof.x, roof.y, roof.z).scale(1.1D);
+            Vec3 seat = passenger.getVehicleAttachmentPoint(this);
+            return target.subtract(0.0D, passenger.getEyeHeight(), 0.0D).add(seat.x, seat.y, seat.z);
+        }
         return new Vec3(0.0D, 0.25D, 0.0D);
     }
 
     @Override
     public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
+        if (ArenaWorld.isArena(this.level())) {
+            // a car on a wall or on the ceiling: the driver gets out onto the floor of the pitch below it, not into the air
+            double x = ArenaWorld.ORIGIN_X + Mth.clamp(this.getX() - ArenaWorld.ORIGIN_X, -(Arena.CORE_X - 2.0D), Arena.CORE_X - 2.0D);
+            double z = ArenaWorld.ORIGIN_Z + Mth.clamp(this.getZ() - ArenaWorld.ORIGIN_Z, -(Arena.CORE_Z - 2.0D), Arena.CORE_Z - 2.0D);
+            return new Vec3(x, ArenaWorld.ORIGIN_Y, z);
+        }
         Vec3 side = getCollisionHorizontalEscapeVector(this.getBbWidth() * Mth.SQRT_OF_TWO, passenger.getBbWidth(), passenger.getYRot());
         double x = this.getX() + side.x;
         double z = this.getZ() + side.z;
