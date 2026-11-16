@@ -282,11 +282,13 @@ public class FennecEntity extends VehicleEntity {
         // the car pitches / rolls around its centre of mass, 0.45 blocks above the ground
         Vec3 centre = this.position().add(0.0D, 0.45D, 0.0D);
 
+        // The two round boost nozzles in the rear fascia of the model are at x = -1.67, y = 0.67, z = +-0.316
+        // (model space, measured on the mesh); the flames start a hand's width behind them.
         for (int side = -1; side <= 1; side += 2) {
             Vec3 origin = centre
                     .add(forward.scale(-1.75D))
-                    .add(right.scale(0.34D * side))
-                    .add(up.scale(0.10D));
+                    .add(right.scale(0.316D * side))
+                    .add(up.scale(0.67D - 0.45D));
             for (int i = 0; i < 3; i++) {
                 Vec3 spread = new Vec3(this.random.nextGaussian(), this.random.nextGaussian(), this.random.nextGaussian()).scale(0.03D);
                 Vec3 v = forward.scale(-0.35D).add(velocity).add(spread);
